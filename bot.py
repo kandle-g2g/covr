@@ -29,8 +29,11 @@ import os
 # =========================
 # SETTINGS
 # =========================
+import os
 
-BOT_TOKEN = "8543427289:AAFQNFQoJ_kWseFExKmleUf8mlZHTxbbLgo"
+BOT_TOKEN = os.getenv(
+    "BOT_TOKEN"
+)
 
 # ID нужной подтемы (topic/thread)
 ALLOWED_THREAD_ID = 12446
