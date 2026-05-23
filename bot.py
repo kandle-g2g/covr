@@ -125,6 +125,7 @@ async def handle_message(
             f"📅 {formatted_date}\n"
             f"💿 {album_info['tracks_count']} tracks\n"
             f"⏳ {album_info['total_duration']}\n\n"
+            f"---Tracklist---\n\n"
             f"{tracks_text}"
         )
 
