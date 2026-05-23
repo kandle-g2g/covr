@@ -28,28 +28,33 @@ def search_album(album_name, artist_name):
 
 
 def get_album_tracks(album_id):
-    # Первый запрос – получаем основную информацию и первую страницу треков
-    response = requests.get(f"https://api.deezer.com/album/{album_id}?limit=100")
+    # Получаем метаданные альбома (название, обложка, артисты, дата)
+    response = requests.get(f"https://api.deezer.com/album/{album_id}")
     if response.status_code != 200:
         raise Exception("Ошибка получения альбома")
-
     data = response.json()
+
     total_tracks = data["tracks"]["total"]
-    all_tracks_data = data["tracks"]["data"]  # первые треки
+    all_tracks_data = []
 
-    # Пагинация – добираем остальные треки, если их больше 100
-    while len(all_tracks_data) < total_tracks:
-        next_index = len(all_tracks_data)
-        next_response = requests.get(
+    # Пагинация – забираем все треки по 100 штук
+    index = 0
+    limit = 100
+    while index < total_tracks:
+        tracks_response = requests.get(
             f"https://api.deezer.com/album/{album_id}/tracks",
-            params={"limit": 100, "index": next_index}
+            params={"limit": limit, "index": index}
         )
-        if next_response.status_code != 200:
-            break  # если ошибка – выходим, но уже собранные треки сохраним
-        next_data = next_response.json()
-        all_tracks_data.extend(next_data["data"])
+        if tracks_response.status_code != 200:
+            break
+        tracks_data = tracks_response.json()
+        batch = tracks_data.get("data", [])
+        if not batch:
+            break
+        all_tracks_data.extend(batch)
+        index += len(batch)
 
-    # Формируем треклист и общую длительность
+    # Формируем треклист
     tracks = []
     total_duration = 0
     for track in all_tracks_data:
@@ -66,7 +71,7 @@ def get_album_tracks(album_id):
     if not artists:
         artists.append(data["artist"]["name"])
 
-    # Форматирование длительности
+    # Форматируем длительность
     hours = total_duration // 3600
     minutes = (total_duration % 3600) // 60
     seconds = total_duration % 60
