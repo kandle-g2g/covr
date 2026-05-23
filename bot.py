@@ -133,25 +133,23 @@ async def handle_message(
         # Buttons
         # =========================
 
+       # Формирование сообщения (ваш существующий код)
+        message = f"🎵 <b>{album_info['title']}</b>\n\n" # и так далее...
+
+        # --- СОЗДАНИЕ УНИВЕРСАЛЬНОЙ ССЫЛКИ НА APPLE MUSIC ---
+        search_term = f"{album_info['title']} {album_info['artists']}"
+        apple_music_search_url = f"https://music.apple.com/us/search?term={search_term.replace(' ', '+')}"
+        # -----------------------------------------------------
+
         keyboard = [
             [
-                InlineKeyboardButton(
-                    "🎧 Spotify",
-                    url=text
-                ),
-
-                InlineKeyboardButton(
-                    "💿 Deezer",
-                    url=album["link"]
-                )
+                InlineKeyboardButton("🎧 Spotify", url=text),
+                InlineKeyboardButton("💿 Deezer", url=album["link"]),
+                InlineKeyboardButton("🎵 Apple Music", url=apple_music_search_url)
             ]
         ]
 
-        reply_markup = (
-            InlineKeyboardMarkup(
-                keyboard
-            )
-        )
+        reply_markup = InlineKeyboardMarkup(keyboard)
 
         # =========================
         # Download cover
