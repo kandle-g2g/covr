@@ -49,11 +49,17 @@ async def handle_message(
 ):
 
     # Игнорируем сообщения вне нужной подтемы
-    if (
-        update.message.message_thread_id
-        != ALLOWED_THREAD_ID
-    ):
-        return
+    chat_type = update.effective_chat.type
+
+    # Если это группа/супергруппа —
+    # проверяем thread ID
+    if chat_type in ["group", "supergroup"]:
+
+        if (
+            update.message.message_thread_id
+            != ALLOWED_THREAD_ID
+        ):
+            return
 
     text = update.message.text.strip()
 
