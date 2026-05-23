@@ -1,124 +1,40 @@
 import os
-
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup
-)
-
-from telegram.ext import (
-    ApplicationBuilder,
-    MessageHandler,
-    ContextTypes,
-    filters,
-)
-
-from spotify_parser import (
-    extract_spotify_metadata
-)
-
-from deezer import (
-    search_album,
-    get_album_tracks
-)
-
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
+from spotify_parser import extract_spotify_metadata
+from deezer import search_album, get_album_tracks
 from datetime import datetime
-
 import requests
 
-
-# =========================
-# SETTINGS
-# =========================
-
-BOT_TOKEN = os.getenv(
-    "BOT_TOKEN"
-)
-
-# ID нужной подтемы (topic/thread)
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 ALLOWED_THREAD_ID = 12446
 
-
-# =========================
-# HANDLER
-# =========================
-
-async def handle_message(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    # Игнорируем сообщения вне нужной подтемы
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_type = update.effective_chat.type
-
-    # Если это группа/супергруппа —
-    # проверяем thread ID
     if chat_type in ["group", "supergroup"]:
-
-        if (
-            update.message.message_thread_id
-            != ALLOWED_THREAD_ID
-        ):
+        if update.message.message_thread_id != ALLOWED_THREAD_ID:
             return
 
     text = update.message.text.strip()
-
-    # Игнорируем всё кроме Spotify album links
     if "spotify.com/album/" not in text:
         return
 
     try:
+        # 1. Получаем метаданные из Spotify
+        spotify_data = extract_spotify_metadata(text)
 
-        # =========================
-        # Spotify metadata
-        # =========================
+        # 2. Ищем альбом в Deezer
+        album = search_album(spotify_data["album_name"], spotify_data["artists"])
+        album_info = get_album_tracks(album["id"])
 
-        spotify_data = (
-            extract_spotify_metadata(
-                text
-            )
-        )
+        # 3. Форматируем дату
+        parsed_date = datetime.strptime(album_info["release_date"], "%Y-%m-%d")
+        formatted_date = f"{parsed_date.strftime('%B')} {parsed_date.day}, {parsed_date.year}"
 
-        # =========================
-        # Deezer search
-        # =========================
+        # 4. Формируем треклист (все треки)
+        tracks_text = "\n".join(album_info["tracks"])
 
-        album = search_album(
-            spotify_data["album_name"],
-            spotify_data["artists"]
-        )
-
-        album_info = get_album_tracks(
-            album["id"]
-        )
-
-        # =========================
-        # Date formatting
-        # =========================
-
-        parsed_date = datetime.strptime(
-            album_info["release_date"],
-            "%Y-%m-%d"
-        )
-
-        formatted_date = (
-            f"{parsed_date.strftime('%B')} "
-            f"{parsed_date.day}, "
-            f"{parsed_date.year}"
-        )
-
-        # =========================
-        # Tracklist
-        # =========================
-
-        tracks_text = "\n".join(
-            album_info["tracks"]
-        )
-
-        # =========================
-        # Message
-        # =========================
-
+        # 5. Полное сообщение
         message = (
             f"🎵 <b>{album_info['title']}</b>\n\n"
             f"👥 {album_info['artists']}\n\n"
@@ -129,65 +45,29 @@ async def handle_message(
             f"{tracks_text}"
         )
 
-        # =========================
-        # Buttons
-        # =========================
-
-       # Формирование сообщения (ваш существующий код)
-        message = f"🎵 <b>{album_info['title']}</b>\n\n" # и так далее...
-
-        # --- СОЗДАНИЕ УНИВЕРСАЛЬНОЙ ССЫЛКИ НА APPLE MUSIC ---
+        # 6. Кнопки (Spotify, Deezer, Apple Music)
+        # Универсальная ссылка на поиск в Apple Music
         search_term = f"{album_info['title']} {album_info['artists']}"
-        apple_music_search_url = f"https://music.apple.com/us/search?term={search_term.replace(' ', '+')}"
-        # -----------------------------------------------------
+        apple_music_url = f"https://music.apple.com/us/search?term={search_term.replace(' ', '+')}"
 
         keyboard = [
             [
                 InlineKeyboardButton("🎧 Spotify", url=text),
                 InlineKeyboardButton("💿 Deezer", url=album["link"]),
-                InlineKeyboardButton("🎵 Apple Music", url=apple_music_search_url)
+                InlineKeyboardButton("🎵 Apple Music", url=apple_music_url)
             ]
         ]
-
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # =========================
-        # Download cover
-        # =========================
-
-        image_response = requests.get(
-            album_info["cover"]
-        )
-
-        # Safe filename
-        safe_title = "".join(
-            c for c in album_info["title"]
-            if (
-                c.isalnum()
-                or c in (
-                    " ",
-                    "-",
-                    "_"
-                )
-            )
-        ).rstrip()
-
-        file_name = (
-            f"{safe_title}.jpg"
-        )
-
+        # 7. Скачиваем обложку
+        image_response = requests.get(album_info["cover"])
+        safe_title = "".join(c for c in album_info["title"] if c.isalnum() or c in (" ", "-", "_")).rstrip()
+        file_name = f"{safe_title}.jpg"
         with open(file_name, "wb") as f:
+            f.write(image_response.content)
 
-            f.write(
-                image_response.content
-            )
-
-        # =========================
-        # Send image
-        # =========================
-
+        # 8. Отправляем фото с подписью и кнопками
         with open(file_name, "rb") as image_file:
-
             await update.message.reply_document(
                 document=image_file,
                 caption=message,
@@ -195,44 +75,8 @@ async def handle_message(
                 reply_markup=reply_markup
             )
 
-        # =========================
-        # Remove temp file
-        # =========================
-
+        # 9. Удаляем временный файл
         os.remove(file_name)
 
     except Exception as e:
-
-        await update.message.reply_text(
-            f"Ошибка:\n{str(e)}"
-        )
-
-
-# =========================
-# MAIN
-# =========================
-
-def main():
-
-    app = (
-        ApplicationBuilder()
-        .token(BOT_TOKEN)
-        .build()
-    )
-
-    app.add_handler(
-        MessageHandler(
-            filters.TEXT,
-            handle_message
-        )
-    )
-
-    print("Бот запущен")
-
-    app.run_polling(
-        allowed_updates=Update.ALL_TYPES
-    )
-
-
-if __name__ == "__main__":
-    main()
+        await update.message.reply_text(f"Ошибка:\n{str(e)}")
