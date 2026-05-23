@@ -1,3 +1,5 @@
+import os
+
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -23,13 +25,11 @@ from deezer import (
 from datetime import datetime
 
 import requests
-import os
 
 
 # =========================
 # SETTINGS
 # =========================
-import os
 
 BOT_TOKEN = os.getenv(
     "BOT_TOKEN"
