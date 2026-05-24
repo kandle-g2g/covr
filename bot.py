@@ -17,7 +17,7 @@ HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 flask_app = Flask(__name__)
 
-# ---------- Вспомогательные функции (без изменений) ----------
+# ---------- Вспомогательные функции ----------
 def clean_query(text: str) -> str:
     if not text:
         return ""
@@ -35,7 +35,8 @@ def format_duration(seconds: int) -> str:
         return f"{hours}:{minutes:02}:{secs:02}"
     return f"{minutes}:{secs:02}"
 
-def deezer_search_album(query: str) -> dict | None:
+# ---------- Deezer API helpers ----------
+def deezer_search_album(query: str):
     try:
         resp = requests.get("https://api.deezer.com/search/album", params={"q": query}, timeout=15)
         if resp.status_code == 200:
@@ -45,7 +46,7 @@ def deezer_search_album(query: str) -> dict | None:
         print(f"Deezer search error: {e}")
     return None
 
-def find_deezer_album_by_artist_and_title(album_name: str, artist_name: str) -> dict | None:
+def find_deezer_album_by_artist_and_title(album_name: str, artist_name: str):
     album_clean = clean_query(album_name)
     artist_clean = clean_query(artist_name)
     queries = [
@@ -68,7 +69,7 @@ def find_deezer_album_by_artist_and_title(album_name: str, artist_name: str) -> 
                 return album
     return None
 
-def extract_deezer_id(url: str) -> int | None:
+def extract_deezer_id(url: str):
     if "deezer.com" not in url:
         return None
     m = re.search(r"/album[/]?(\d+)", url)
@@ -85,6 +86,7 @@ def extract_deezer_id(url: str) -> int | None:
             pass
     return None
 
+# ---------- Построение сообщения ----------
 def build_album_caption(album_info: dict) -> str:
     tracklist = "\n".join(album_info["tracks"])
     raw_date = album_info.get("release_date", "")
@@ -159,6 +161,7 @@ async def send_album(update: Update, context: ContextTypes.DEFAULT_TYPE, album_i
         **kwargs
     )
 
+# ---------- Обработчики ----------
 async def handle_artist_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -188,6 +191,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print(f"📩 Received: {text}")
 
     try:
+        # 1. Deezer ссылка
         if "deezer.com" in text and "/album/" in text:
             deezer_id = extract_deezer_id(text)
             if deezer_id:
@@ -195,6 +199,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await send_album(update, context, deezer_id)
                 return
 
+        # 2. Spotify ссылка
         if "spotify.com/album/" in text:
             parsed = parse_music_url(text)
             if parsed:
@@ -206,6 +211,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await send_album(update, context, album["id"])
                     return
 
+        # 3. Apple Music ссылка
         if "music.apple.com" in text:
             parsed = parse_music_url(text)
             if parsed:
@@ -217,6 +223,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await send_album(update, context, album["id"])
                     return
 
+        # 4. Текстовый запрос: сначала ищем артиста
         artist_obj = search_artist(text)
         if artist_obj:
             albums = search_artist_albums(text)
@@ -225,6 +232,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"🎤 {artist_obj['name']} albums:", reply_markup=InlineKeyboardMarkup(keyboard))
                 return
 
+        # 5. Если артист не найден, ищем альбом
         album = deezer_search_album(text)
         if album:
             await send_album(update, context, album["id"])
@@ -235,45 +243,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"🔥 Error: {e}")
         await update.message.reply_text(f"Error: {str(e)}")
 
-# ---------- Инициализация приложения ----------
+# ---------- Создание и инициализация приложения ----------
 application = Application.builder().token(BOT_TOKEN).build()
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-application.add_handler(CallbackQueryHandler(handle_artist_buttons, pattern=r"^artist::"))
-application.add_handler(CallbackQueryHandler(handle_album_buttons, pattern=r"^album::"))
 
-# Инициализируем приложение (вызываем initialize и start)
-async def init_app():
-    await application.initialize()
-    await application.start()
-    print("✅ Application initialized and started")
-
-# Синхронный вебхук с вызовом инициализированного приложения
 @flask_app.route("/webhook", methods=["POST"])
 def webhook():
     json_data = request.get_json(force=True)
     update = Update.de_json(json_data, application.bot)
-    # Запускаем обработку в существующем event loop или создаём новый
-    # Но application уже должен быть инициализирован глобально
-    # Используем asyncio.run_coroutine_threadsafe, если loop работает в фоне.
-    # Проще: создать новый event loop и запустить process_update с уже инициализированным app.
+    # Запускаем обработку в существующем event loop (или создаём новый)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    try:
-        loop.run_until_complete(application.process_update(update))
-    finally:
-        loop.close()
+    loop.run_until_complete(application.process_update(update))
     return "OK", 200
 
 @flask_app.route("/healthcheck")
 def healthcheck():
     return "OK", 200
 
-if __name__ == "__main__":
-    # Инициализируем приложение один раз перед запуском Flask
-    asyncio.run(init_app())
-    # Устанавливаем вебхук (замените на ваш реальный URL)
+async def setup_webhook():
+    # Замените на ваш реальный домен на Render
     webhook_url = "https://covr.onrender.com/webhook"
-    asyncio.run(application.bot.set_webhook(webhook_url))
+    await application.bot.set_webhook(webhook_url)
     print(f"✅ Webhook set to {webhook_url}")
+
+if __name__ == "__main__":
+    # Инициализируем приложение (важно!)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(application.initialize())
+    # Устанавливаем вебхук
+    loop.run_until_complete(setup_webhook())
+    # Запускаем Flask
     port = int(os.environ.get("PORT", 10000))
     flask_app.run(host="0.0.0.0", port=port)
