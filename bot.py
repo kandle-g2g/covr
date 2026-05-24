@@ -8,7 +8,7 @@ from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
-# Импортируйте ваши модули (проверьте пути)
+# Импортируйте ваши модули (пути должны быть правильные)
 from music_parser import parse_music_url
 from deezer import get_album_tracks, search_artist_albums, search_artist
 
@@ -20,9 +20,12 @@ HEADERS = {"User-Agent": "Mozilla/5.0"}
 # ---------- Flask для healthcheck ----------
 flask_app = Flask(__name__)
 
+@flask_app.route("/")
+def home():
+    return "Bot is running"
+
 @flask_app.route("/health")
-@flask_app.route("/healthcheck")
-def healthcheck():
+def health():
     return "OK", 200
 
 def run_flask():
@@ -98,11 +101,10 @@ def extract_deezer_id(url: str):
             pass
     return None
 
-# ---------- Построение сообщения ----------
+# ---------- Построение сообщения (без нумерации треков) ----------
 def build_album_caption(album_info: dict) -> str:
-    # Нумерованный треклист (цифры копируются, но пользователь может их удалить вручную)
-    numbered_tracks = [f"{i+1}. {track}" for i, track in enumerate(album_info["tracks"])]
-    tracklist = "\n".join(numbered_tracks)
+    # Просто список названий треков, каждый с новой строки – без цифр
+    tracklist = "\n".join(album_info["tracks"])
     raw_date = album_info.get("release_date", "")
     formatted_date = raw_date
     try:
@@ -202,7 +204,7 @@ async def send_album(update: Update, context: ContextTypes.DEFAULT_TYPE, album_i
 # ---------- Обработчики команд ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🎵 *Covr bot*\n\n"
+        "🎵 *Music Album Bot*\n\n"
         "Send me:\n"
         "• an album name (e.g., *Graduation*)\n"
         "• an artist name (e.g., *Kanye West*) – I'll show their albums\n"
@@ -307,8 +309,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Internal error: {e}")
 
 # ---------- Запуск polling с автоматическим перезапуском ----------
-def run_bot_with_retry():
-    # Удаляем вебхук на случай, если он был установлен
+def run_polling_with_retry():
+    # Удаляем вебхук перед стартом
     try:
         requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook")
         print("✅ Webhook deleted")
@@ -327,13 +329,13 @@ def run_bot_with_retry():
             print("✅ Бот запущен в режиме polling, слушаем сообщения...")
             application.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
         except Exception as e:
-            print(f"❌ Polling crashed: {e}. Restarting in 10 seconds...")
+            print(f"❌ Polling упал с ошибкой: {e}. Перезапуск через 10 секунд...")
             time.sleep(10)
 
 # ---------- Главный вход ----------
 if __name__ == "__main__":
-    # Запускаем Flask-сервер в фоновом потоке (healthcheck)
+    # Запускаем Flask в фоновом потоке (чтобы был открыт порт)
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
-    # Запускаем polling с автоперезапуском
-    run_bot_with_retry()
+    # Запускаем polling с автоматическим восстановлением
+    run_polling_with_retry()
