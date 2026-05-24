@@ -1,7 +1,6 @@
 import os
 import re
 import requests
-from bs4 import BeautifulSoup
 from flask import Flask
 from telegram import (
     Update,
@@ -35,21 +34,20 @@ def clean(text):
     return re.sub(r"\s+", " ", text).strip()
 
 
-def format_duration(ms):
-    total_seconds = ms // 1000
-    minutes = total_seconds // 60
-    seconds = total_seconds % 60
-    return f"{minutes}:{seconds:02}"
+def format_duration(seconds):
+    minutes = seconds // 60
+    sec = seconds % 60
+    return f"{minutes}:{sec:02}"
 
 
 def search_album(query):
     url = f"https://api.deezer.com/search/album?q={query}"
-    data = requests.get(url).json()
+    response = requests.get(url).json()
 
-    if not data.get("data"):
-        return None
+    if not response.get("data"):
+        return []
 
-    return data["data"][:10]
+    return response["data"]
 
 
 def get_album(album_id):
@@ -61,7 +59,7 @@ def build_album_caption(album):
     artist = album["artist"]["name"]
     title = album["title"]
 
-    duration = format_duration(album["duration"] * 1000)
+    duration = format_duration(album["duration"])
     tracks_count = album["nb_tracks"]
 
     caption = (
@@ -73,11 +71,11 @@ def build_album_caption(album):
     )
 
     for i, track in enumerate(album["tracks"]["data"], start=1):
-        duration = format_duration(track["duration"] * 1000)
+        track_duration = format_duration(track["duration"])
 
         caption += (
             f"\n{i}. {track['title']} "
-            f"({duration})"
+            f"({track_duration})"
         )
 
     return caption
@@ -92,15 +90,20 @@ def build_service_buttons(album):
     spotify = f"https://open.spotify.com/search/{query}"
     apple = f"https://music.apple.com/us/search?term={query}"
     deezer = f"https://www.deezer.com/search/{query}"
-
-    artist_query = requests.utils.quote(artist)
-    artist_link = f"https://www.deezer.com/search/{artist_query}"
+    tidal = f"https://listen.tidal.com/search?q={query}"
+    youtube = f"https://music.youtube.com/search?q={query}"
+    soundcloud = f"https://soundcloud.com/search?q={query}"
 
     keyboard = [
         [
             InlineKeyboardButton("Spotify", url=spotify),
-            InlineKeyboardButton("Apple Music", url=apple),
+            InlineKeyboardButton("Apple", url=apple),
             InlineKeyboardButton("Deezer", url=deezer),
+        ],
+        [
+            InlineKeyboardButton("TIDAL", url=tidal),
+            InlineKeyboardButton("YouTube", url=youtube),
+            InlineKeyboardButton("SoundCloud", url=soundcloud),
         ],
         [
             InlineKeyboardButton(
@@ -129,14 +132,20 @@ async def send_album(
 
     image = album["cover_xl"]
 
+    thread_id = None
+
+    if update.message:
+        thread_id = update.message.message_thread_id
+
+    elif update.callback_query:
+        thread_id = update.callback_query.message.message_thread_id
+
     await update.effective_chat.send_photo(
         photo=image,
         caption=caption,
         parse_mode="HTML",
         reply_markup=keyboard,
-        message_thread_id=update.message.message_thread_id
-        if update.message
-        else update.callback_query.message.message_thread_id
+        message_thread_id=thread_id
     )
 
 
@@ -173,42 +182,39 @@ async def handle_message(
         return
 
     # =========================
-    # IF MANY ALBUMS
+    # MULTIPLE RESULTS
     # =========================
 
-    if len(results) > 1:
-        keyboard = []
+    keyboard = []
+    added = set()
 
-        for album in results[:10]:
-            artist = album["artist"]["name"]
-            title = album["title"]
+    for album in results[:25]:
+        artist = album["artist"]["name"]
+        title = album["title"]
 
-            keyboard.append([
-                InlineKeyboardButton(
-                    f"{artist} — {title}",
-                    callback_data=f"album::{album['id']}"
-                )
-            ])
+        key = f"{artist}-{title}"
 
-        await update.message.reply_text(
-            "Choose album:",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            message_thread_id=update.message.message_thread_id
-        )
+        if key in added:
+            continue
 
-        return
+        added.add(key)
 
-    # =========================
-    # SINGLE RESULT
-    # =========================
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{artist} — {title}",
+                callback_data=f"album::{album['id']}"
+            )
+        ])
 
-    album_id = results[0]["id"]
-
-    await send_album(update, context, album_id)
+    await update.message.reply_text(
+        "Choose album:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        message_thread_id=update.message.message_thread_id
+    )
 
 
 # =========================
-# BUTTONS
+# BUTTON HANDLER
 # =========================
 
 async def handle_buttons(
@@ -253,11 +259,19 @@ async def handle_buttons(
             return
 
         keyboard = []
+        added = set()
 
-        for album in albums[:10]:
+        for album in albums[:25]:
+            title = album["title"]
+
+            if title in added:
+                continue
+
+            added.add(title)
+
             keyboard.append([
                 InlineKeyboardButton(
-                    album["title"],
+                    title,
                     callback_data=f"album::{album['id']}"
                 )
             ])
