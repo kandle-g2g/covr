@@ -383,7 +383,8 @@ async def handle_message(
             f"👥 {artists}\n\n"
             f"📅 {release_date}\n"
             f"💿 {total_tracks} tracks\n"
-            f"⏱ {duration_text}\n\n"
+            f"⏳ {duration_text}\n\n"
+            f"---Tracklist---\n\n"
             f"{tracklist}"
         )
 
@@ -403,7 +404,39 @@ async def handle_message(
 
         deezer_url = album.get("link")
 
+        search_query = quote(
+            f"{title} {artists}"
+        )
+
+        spotify_url = (
+            "https://open.spotify.com/search/"
+            f"{search_query}"
+        )
+
+        apple_music_url = (
+            "https://music.apple.com/us/search"
+            f"?term={search_query}"
+        )
+
+        deezer_url = album.get("link")
+
+        youtube_music_url = (
+            "https://music.youtube.com/search"
+            f"?q={search_query}"
+        )
+
+        soundcloud_url = (
+            "https://soundcloud.com/search"
+            f"?q={search_query}"
+        )
+
+        tidal_url = (
+            "https://listen.tidal.com/search"
+            f"?query={search_query}"
+        )
+
         keyboard = InlineKeyboardMarkup([
+
             [
                 InlineKeyboardButton(
                     "Spotify",
@@ -411,13 +444,30 @@ async def handle_message(
                 ),
 
                 InlineKeyboardButton(
-                    "Deezer",
-                    url=deezer_url
+                    "Apple Music",
+                    url=apple_music_url
                 ),
 
                 InlineKeyboardButton(
-                    "Apple Music",
-                    url=apple_music_url
+                    "Deezer",
+                    url=deezer_url
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    "YouTube Music",
+                    url=youtube_music_url
+                ),
+
+                InlineKeyboardButton(
+                    "SoundCloud",
+                    url=soundcloud_url
+                ),
+
+                InlineKeyboardButton(
+                    "Tidal",
+                    url=tidal_url
                 )
             ]
         ])
