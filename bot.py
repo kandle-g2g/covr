@@ -32,6 +32,8 @@ from music_parser import (
     extract_deezer_album_id
 )
 
+print(update.message.message_thread_id)
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 TARGET_THREAD_ID = None
