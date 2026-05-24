@@ -1,18 +1,30 @@
-# spotify_parser.py
+import requests
+from bs4 import BeautifulSoup
 
-import re
 
+def extract_album_name(url):
 
-def extract_spotify_album_id(url):
+    response = requests.get(url)
 
-    match = re.search(
-        r"album/([a-zA-Z0-9]+)",
-        url
+    soup = BeautifulSoup(
+        response.text,
+        "html.parser"
     )
 
-    if not match:
+    title = soup.find("title")
+
+    if not title:
         raise Exception(
-            "Invalid Spotify album link."
+            "Could not parse Spotify page."
         )
 
-    return match.group(1)
+    text = title.text
+
+    text = text.replace(
+        " - Album by ",
+        "|"
+    )
+
+    album_name = text.split("|")[0].strip()
+
+    return album_name

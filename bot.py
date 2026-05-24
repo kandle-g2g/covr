@@ -1,7 +1,6 @@
-# bot.py
-
 import os
 import re
+import requests
 
 from telegram import (
     Update,
@@ -16,21 +15,18 @@ from telegram.ext import (
     filters
 )
 
-from deezer import (
-    get_spotify_album_info,
-    search_deezer_album
-)
-
-from spotify_parser import extract_spotify_album_id
+from deezer import search_album
+from spotify_parser import extract_album_name
 
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# ID подтемы
+# ID нужной подтемы
 ALLOWED_THREAD_ID = 2
 
 
 def format_duration(seconds):
+
     hours = seconds // 3600
     minutes = (seconds % 3600) // 60
     secs = seconds % 60
@@ -49,8 +45,7 @@ async def handle_message(
     if not update.message:
         return
 
-    # Разрешаем ЛС
-    # И фильтруем только группу
+    # Работа в ЛС + фильтр подтемы
     chat_type = update.effective_chat.type
 
     if chat_type in ["group", "supergroup"]:
@@ -78,21 +73,11 @@ async def handle_message(
 
     try:
 
-        spotify_info = get_spotify_album_info(
+        album_name = extract_album_name(
             spotify_url
         )
 
-        if not spotify_info:
-
-            await update.message.reply_text(
-                "Spotify album not found."
-            )
-
-            return
-
-        album_name = spotify_info["title"]
-
-        album = search_deezer_album(
+        album = search_album(
             album_name
         )
 
@@ -113,7 +98,6 @@ async def handle_message(
 
         release_date = album["release_date"]
 
-        # Формат даты
         year, month, day = release_date.split("-")
 
         months = {
@@ -137,8 +121,6 @@ async def handle_message(
             f"{year}"
         )
 
-        cover_url = album["cover_xl"]
-
         tracks = album["tracks"]["data"]
 
         track_count = len(tracks)
@@ -152,43 +134,46 @@ async def handle_message(
             total_duration
         )
 
-        track_lines = []
+        tracklist = "\n".join(
+            track["title"]
+            for track in tracks
+        )
 
-        for track in tracks:
-
-            track_lines.append(
-                track["title"]
-            )
-
-        tracklist = "\n".join(track_lines)
-
-        summary = (
+        message = (
             f"🎵 {title}\n\n"
             f"👥 {artists}\n\n"
             f"📅 {release_date}\n"
             f"💿 {track_count} tracks\n"
-            f"⏱ {album_duration}"
+            f"⏱ {album_duration}\n\n"
+            f"{tracklist}"
         )
 
         keyboard = InlineKeyboardMarkup([
             [
                 InlineKeyboardButton(
-                    "Open in Spotify",
+                    "Spotify",
                     url=spotify_url
+                ),
+                InlineKeyboardButton(
+                    "Deezer",
+                    url=album["link"]
                 )
             ]
         ])
 
-        # Фото + краткая инфа
-        await update.message.reply_photo(
-            photo=cover_url,
-            caption=summary,
-            reply_markup=keyboard
+        # Получаем оригинальную обложку
+        image_response = requests.get(
+            album["cover_xl"]
         )
 
-        # Полный треклист отдельно
-        await update.message.reply_text(
-            tracklist
+        image_bytes = image_response.content
+
+        # Отправляем как файл
+        await update.message.reply_document(
+            document=image_bytes,
+            filename="cover.jpg",
+            caption=message,
+            reply_markup=keyboard
         )
 
     except Exception as e:
