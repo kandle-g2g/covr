@@ -7,7 +7,6 @@ from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
-# Импортируйте ваши модули (убедитесь, что пути правильные)
 from music_parser import parse_music_url
 from deezer import get_album_tracks, search_artist_albums, search_artist
 
@@ -16,7 +15,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 TARGET_THREAD_ID = os.getenv("TARGET_THREAD_ID")
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-# ---------- Flask для healthcheck (чтобы Render не убивал процесс) ----------
+# ---------- Flask для healthcheck ----------
 flask_app = Flask(__name__)
 
 @flask_app.route("/healthcheck")
@@ -198,7 +197,7 @@ async def send_album(update: Update, context: ContextTypes.DEFAULT_TYPE, album_i
 # ---------- Обработчики команд ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🎵 *Covr bot*\n\n"
+        "🎵 *Music Album Bot*\n\n"
         "Send me:\n"
         "• an album name (e.g., *Graduation*)\n"
         "• an artist name (e.g., *Kanye West*) – I'll show their albums\n"
@@ -221,7 +220,6 @@ async def artist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton(alb["title"], callback_data=f"album::{alb['id']}")] for alb in albums]
     await update.message.reply_text(f"🎤 {artist_name} albums:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-# ---------- Обработчики кнопок ----------
 async def handle_artist_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -241,7 +239,6 @@ async def handle_album_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
     print(f"💿 Album button: {album_id}")
     await send_album(update, context, album_id)
 
-# ---------- Основной обработчик текстовых сообщений ----------
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
@@ -255,7 +252,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print(f"📩 Received: {text}")
 
     try:
-        # ----- 1. Обработка ссылок -----
+        # ----- Ссылки -----
         if "deezer.com" in text and "/album/" in text:
             deezer_id = extract_deezer_id(text)
             if deezer_id:
@@ -283,14 +280,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await send_album(update, context, album["id"])
                     return
 
-        # ----- 2. Текстовый поиск: сначала альбом -----
+        # ----- Текстовый поиск: сначала альбом -----
         album = deezer_search_album(text)
         if album:
             print(f"📀 Album found: {album['title']}")
             await send_album(update, context, album["id"])
             return
 
-        # ----- 3. Если альбом не найден, пробуем как артиста -----
+        # ----- Если не найден альбом, то артист -----
         artist_obj = search_artist(text)
         if artist_obj:
             albums = search_artist_albums(text)
@@ -304,18 +301,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"🔥 Error in handle_message: {e}")
         await update.message.reply_text(f"Internal error: {e}")
 
-# ---------- Запуск бота (polling + healthcheck сервер) ----------
-def main():
-    # Удаляем вебхук, чтобы polling работал
+# ---------- Запуск ----------
+def run_polling():
+    # Удаляем вебхук на случай, если он был установлен
     try:
         requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook")
         print("✅ Webhook deleted")
     except Exception as e:
         print(f"Failed to delete webhook: {e}")
-
-    # Запускаем Flask healthcheck в отдельном потоке
-    threading.Thread(target=run_flask, daemon=True).start()
-    print("✅ Healthcheck server started on port 10000")
 
     application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
@@ -328,4 +321,8 @@ def main():
     application.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
-    main()
+    # Запускаем Flask-сервер в фоновом потоке (для healthcheck)
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    # Запускаем polling в основном потоке
+    run_polling()
