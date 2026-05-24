@@ -1,6 +1,7 @@
 import os
 import re
 import requests
+from urllib.parse import quote
 
 from telegram import (
     Update,
@@ -148,15 +149,30 @@ async def handle_message(
             f"{tracklist}"
         )
 
+        apple_query = quote(
+            f"{title} {artists}"
+        )
+
+        apple_music_url = (
+            "https://music.apple.com/us/search"
+            f"?term={apple_query}"
+        )
+
         keyboard = InlineKeyboardMarkup([
             [
                 InlineKeyboardButton(
                     "Spotify",
                     url=spotify_url
                 ),
+
                 InlineKeyboardButton(
                     "Deezer",
                     url=album["link"]
+                ),
+
+                InlineKeyboardButton(
+                    "Apple Music",
+                    url=apple_music_url
                 )
             ]
         ])
