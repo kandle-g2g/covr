@@ -34,7 +34,9 @@ from music_parser import (
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-TARGET_THREAD_ID = None
+TARGET_THREAD_ID = int(
+    os.getenv("TARGET_THREAD_ID", "0")
+)
 
 # ---------------- FLASK ----------------
 
@@ -47,6 +49,7 @@ def home():
 
 
 def run_web():
+
     port = int(
         os.environ.get(
             "PORT",
@@ -106,6 +109,7 @@ def format_release_date(date_string):
 def format_duration(seconds):
 
     hours = seconds // 3600
+
     minutes = (
         seconds % 3600
     ) // 60
@@ -113,6 +117,7 @@ def format_duration(seconds):
     secs = seconds % 60
 
     if hours > 0:
+
         return (
             f"{hours}:"
             f"{minutes:02}:"
@@ -455,17 +460,23 @@ async def handle_message(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    print(update.message.message_thread_id)
     if not update.message:
         return
 
-    if TARGET_THREAD_ID is not None:
+    # -------- THREAD FILTER --------
+
+    if update.message.chat.type in [
+        "supergroup",
+        "group"
+    ]:
 
         if (
             update.message.message_thread_id
             != TARGET_THREAD_ID
         ):
             return
+
+    # -------------------------------
 
     text = update.message.text
 
@@ -488,6 +499,7 @@ async def handle_message(
             )
 
             if title:
+
                 album = (
                     search_album(
                         title
@@ -506,6 +518,7 @@ async def handle_message(
             )
 
             if title:
+
                 album = (
                     search_album(
                         title
@@ -524,6 +537,7 @@ async def handle_message(
             )
 
             if album_id:
+
                 album = (
                     get_album_by_id(
                         album_id
