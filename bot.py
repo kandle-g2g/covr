@@ -1,656 +1,311 @@
 import os
+import re
 import requests
-
-from urllib.parse import quote
-from threading import Thread
+from bs4 import BeautifulSoup
 from flask import Flask
-
 from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    InputFile
 )
-
 from telegram.ext import (
     Application,
     MessageHandler,
     CallbackQueryHandler,
     ContextTypes,
-    filters
+    filters,
 )
 
-from deezer import (
-    search_album,
-    get_album_by_id,
-    search_artist,
-    get_artist_albums
-)
-
-from music_parser import (
-    extract_title_from_page,
-    extract_deezer_album_id
-)
-
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-
-TARGET_THREAD_ID = int(
-    os.getenv("TARGET_THREAD_ID", "0")
-)
-
-# ---------------- FLASK ----------------
+TOKEN = os.getenv("BOT_TOKEN")
+TARGET_THREAD_ID = int(os.getenv("TARGET_THREAD_ID", "0"))
 
 app_flask = Flask(__name__)
 
 
 @app_flask.route("/")
 def home():
-    return "Bot is running"
+    return "Bot is running!"
 
 
-def run_web():
+# =========================
+# HELPERS
+# =========================
 
-    port = int(
-        os.environ.get(
-            "PORT",
-            10000
-        )
-    )
-
-    app_flask.run(
-        host="0.0.0.0",
-        port=port
-    )
+def clean(text):
+    return re.sub(r"\s+", " ", text).strip()
 
 
-Thread(
-    target=run_web
-).start()
-
-# --------------------------------------
-
-
-def format_release_date(date_string):
-
-    months = {
-        "01": "January",
-        "02": "February",
-        "03": "March",
-        "04": "April",
-        "05": "May",
-        "06": "June",
-        "07": "July",
-        "08": "August",
-        "09": "September",
-        "10": "October",
-        "11": "November",
-        "12": "December"
-    }
-
-    parts = date_string.split("-")
-
-    if len(parts) != 3:
-        return date_string
-
-    year, month, day = parts
-
-    month_name = months.get(
-        month,
-        month
-    )
-
-    return (
-        f"{month_name} "
-        f"{int(day)}, "
-        f"{year}"
-    )
+def format_duration(ms):
+    total_seconds = ms // 1000
+    minutes = total_seconds // 60
+    seconds = total_seconds % 60
+    return f"{minutes}:{seconds:02}"
 
 
-def format_duration(seconds):
+def search_album(query):
+    url = f"https://api.deezer.com/search/album?q={query}"
+    data = requests.get(url).json()
 
-    hours = seconds // 3600
+    if not data.get("data"):
+        return None
 
-    minutes = (
-        seconds % 3600
-    ) // 60
-
-    secs = seconds % 60
-
-    if hours > 0:
-
-        return (
-            f"{hours}:"
-            f"{minutes:02}:"
-            f"{secs:02}"
-        )
-
-    return (
-        f"{minutes:02}:"
-        f"{secs:02}"
-    )
+    return data["data"][:10]
 
 
-async def send_album(
-    context,
-    chat_id,
-    album
-):
+def get_album(album_id):
+    url = f"https://api.deezer.com/album/{album_id}"
+    return requests.get(url).json()
 
-    title = album.get(
-        "title",
-        "Unknown"
-    )
 
-    artists_list = []
+def build_album_caption(album):
+    artist = album["artist"]["name"]
+    title = album["title"]
 
-    contributors = album.get(
-        "contributors",
-        []
-    )
-
-    if contributors:
-
-        for artist in contributors:
-
-            name = artist.get("name")
-
-            if (
-                name
-                and name not in artists_list
-            ):
-                artists_list.append(name)
-
-    else:
-
-        main_artist = (
-            album.get("artist", {})
-            .get("name")
-        )
-
-        if main_artist:
-            artists_list.append(
-                main_artist
-            )
-
-    artists = ", ".join(
-        artists_list
-    )
-
-    release_date = (
-        format_release_date(
-            album.get(
-                "release_date",
-                "Unknown"
-            )
-        )
-    )
-
-    tracks = album.get(
-        "full_tracks",
-        []
-    )
-
-    total_tracks = len(tracks)
-
-    total_duration = sum(
-        track.get("duration", 0)
-        for track in tracks
-    )
-
-    duration_text = (
-        format_duration(
-            total_duration
-        )
-    )
-
-    cover_url = (
-        album.get("cover_xl")
-        or album.get("cover_big")
-        or album.get("cover")
-    )
-
-    track_lines = []
-
-    for track in tracks:
-
-        track_name = track.get(
-            "title",
-            "Unknown Track"
-        )
-
-        track_lines.append(
-            track_name
-        )
-
-    tracklist = "\n".join(
-        track_lines
-    )
+    duration = format_duration(album["duration"] * 1000)
+    tracks_count = album["nb_tracks"]
 
     caption = (
-        f"🎵 {title}\n\n"
-        f"👥 {artists}\n\n"
-        f"📅 {release_date}\n"
-        f"💿 {total_tracks} tracks\n"
-        f"⏳ {duration_text}\n\n"
-        f"---Tracklist---\n\n"
-        f"{tracklist}"
+        f"🎵 <b>{title}</b>\n"
+        f"👤 {artist}\n"
+        f"⏳ {duration}\n"
+        f"🎼 {tracks_count} tracks\n\n"
+        f"---Tracklist---\n"
     )
 
-    search_query = quote(
-        f"{title} {artists}"
-    )
+    for i, track in enumerate(album["tracks"]["data"], start=1):
+        duration = format_duration(track["duration"] * 1000)
 
-    spotify_url = (
-        "https://open.spotify.com/search/"
-        f"{search_query}"
-    )
+        caption += (
+            f"\n{i}. {track['title']} "
+            f"({duration})"
+        )
 
-    apple_music_url = (
-        "https://music.apple.com/us/search"
-        f"?term={search_query}"
-    )
+    return caption
 
-    deezer_url = album.get(
-        "link"
-    )
 
-    youtube_music_url = (
-        "https://music.youtube.com/search"
-        f"?q={search_query}"
-    )
+def build_service_buttons(album):
+    title = album["title"]
+    artist = album["artist"]["name"]
 
-    soundcloud_url = (
-        "https://soundcloud.com/search"
-        f"?q={search_query}"
-    )
+    query = requests.utils.quote(f"{artist} {title}")
 
-    tidal_url = (
-        "https://listen.tidal.com/search"
-        f"?query={search_query}"
-    )
+    spotify = f"https://open.spotify.com/search/{query}"
+    apple = f"https://music.apple.com/us/search?term={query}"
+    deezer = f"https://www.deezer.com/search/{query}"
 
-    artist_name = (
-        album.get("artist", {})
-        .get("name", "")
-    )
+    artist_query = requests.utils.quote(artist)
+    artist_link = f"https://www.deezer.com/search/{artist_query}"
 
-    keyboard = InlineKeyboardMarkup([
-
+    keyboard = [
         [
-            InlineKeyboardButton(
-                "Spotify",
-                url=spotify_url
-            ),
-
-            InlineKeyboardButton(
-                "Apple Music",
-                url=apple_music_url
-            ),
-
-            InlineKeyboardButton(
-                "Deezer",
-                url=deezer_url
-            )
+            InlineKeyboardButton("Spotify", url=spotify),
+            InlineKeyboardButton("Apple Music", url=apple),
+            InlineKeyboardButton("Deezer", url=deezer),
         ],
-
         [
             InlineKeyboardButton(
-                "YouTube Music",
-                url=youtube_music_url
-            ),
-
-            InlineKeyboardButton(
-                "SoundCloud",
-                url=soundcloud_url
-            ),
-
-            InlineKeyboardButton(
-                "Tidal",
-                url=tidal_url
-            )
-        ],
-
-        [
-            InlineKeyboardButton(
-                f"View More From {artist_name}",
-                callback_data=(
-                    f"artist:{artist_name}"
-                )
+                f"More albums by {artist}",
+                callback_data=f"artist::{artist}"
             )
         ]
-    ])
+    ]
 
-    if cover_url:
-
-        image_response = requests.get(
-            cover_url,
-            timeout=15
-        )
-
-        image_data = (
-            image_response.content
-        )
-
-        filename = (
-            f"{title}.jpg"
-        )
-
-        with open(
-            filename,
-            "wb"
-        ) as f:
-
-            f.write(image_data)
-
-        with open(
-            filename,
-            "rb"
-        ) as photo:
-
-            await context.bot.send_document(
-                chat_id=chat_id,
-                document=InputFile(
-                    photo,
-                    filename=filename
-                ),
-                caption=caption,
-                reply_markup=keyboard
-            )
-
-        os.remove(filename)
+    return InlineKeyboardMarkup(keyboard)
 
 
-async def handle_callback(
+# =========================
+# SEND ALBUM
+# =========================
+
+async def send_album(
     update: Update,
-    context: ContextTypes.DEFAULT_TYPE
+    context: ContextTypes.DEFAULT_TYPE,
+    album_id: int,
 ):
+    album = get_album(album_id)
 
-    query = update.callback_query
+    caption = build_album_caption(album)
+    keyboard = build_service_buttons(album)
 
-    await query.answer()
+    image = album["cover_xl"]
 
-    data = query.data
+    await update.effective_chat.send_photo(
+        photo=image,
+        caption=caption,
+        parse_mode="HTML",
+        reply_markup=keyboard,
+        message_thread_id=update.message.message_thread_id
+        if update.message
+        else update.callback_query.message.message_thread_id
+    )
 
-    if data.startswith(
-        "artist:"
-    ):
 
-        artist_name = (
-            data.replace(
-                "artist:",
-                ""
-            )
-        )
-
-        artist = search_artist(
-            artist_name
-        )
-
-        if not artist:
-            return
-
-        albums = (
-            get_artist_albums(
-                artist["id"]
-            )
-        )
-
-        buttons = []
-
-        for album in albums[:20]:
-
-            album_title = (
-                album["title"]
-            )
-
-            album_id = (
-                album["id"]
-            )
-
-            buttons.append([
-                InlineKeyboardButton(
-                    album_title,
-                    callback_data=(
-                        f"album:{album_id}"
-                    )
-                )
-            ])
-
-        keyboard = (
-            InlineKeyboardMarkup(
-                buttons
-            )
-        )
-
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text=(
-                f"Albums by "
-                f"{artist_name}:"
-            ),
-            reply_markup=keyboard
-        )
-
-    elif data.startswith(
-        "album:"
-    ):
-
-        album_id = (
-            data.replace(
-                "album:",
-                ""
-            )
-        )
-
-        album = (
-            get_album_by_id(
-                album_id
-            )
-        )
-
-        await send_album(
-            context,
-            query.message.chat_id,
-            album
-        )
-
+# =========================
+# MESSAGE HANDLER
+# =========================
 
 async def handle_message(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-
     if not update.message:
         return
 
-    # -------- THREAD FILTER --------
+    # =========================
+    # THREAD FILTER
+    # =========================
 
-    if update.message.chat.type in [
-        "supergroup",
-        "group"
-    ]:
+    if update.effective_chat.type in ["group", "supergroup"]:
+        thread_id = update.message.message_thread_id
 
-        if (
-            update.message.message_thread_id
-            != TARGET_THREAD_ID
-        ):
+        if TARGET_THREAD_ID and thread_id != TARGET_THREAD_ID:
             return
 
-    # -------------------------------
+    query = clean(update.message.text)
 
-    text = update.message.text
+    results = search_album(query)
 
-    if not text:
+    if not results:
+        await update.message.reply_text(
+            "Nothing found.",
+            message_thread_id=update.message.message_thread_id
+        )
         return
 
-    album = None
+    # =========================
+    # IF MANY ALBUMS
+    # =========================
 
-    try:
+    if len(results) > 1:
+        keyboard = []
 
-        if (
-            "open.spotify.com"
-            in text
-        ):
+        for album in results[:10]:
+            artist = album["artist"]["name"]
+            title = album["title"]
 
-            title = (
-                extract_title_from_page(
-                    text
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"{artist} — {title}",
+                    callback_data=f"album::{album['id']}"
                 )
-            )
+            ])
 
-            if title:
+        await update.message.reply_text(
+            "Choose album:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            message_thread_id=update.message.message_thread_id
+        )
 
-                album = (
-                    search_album(
-                        title
-                    )
-                )
+        return
 
-        elif (
-            "music.apple.com"
-            in text
-        ):
+    # =========================
+    # SINGLE RESULT
+    # =========================
 
-            title = (
-                extract_title_from_page(
-                    text
-                )
-            )
+    album_id = results[0]["id"]
 
-            if title:
+    await send_album(update, context, album_id)
 
-                album = (
-                    search_album(
-                        title
-                    )
-                )
 
-        elif (
-            "deezer.com"
-            in text
-        ):
+# =========================
+# BUTTONS
+# =========================
 
-            album_id = (
-                extract_deezer_album_id(
-                    text
-                )
-            )
+async def handle_buttons(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    query = update.callback_query
+    await query.answer()
 
-            if album_id:
+    data = query.data
 
-                album = (
-                    get_album_by_id(
-                        album_id
-                    )
-                )
+    # =========================
+    # OPEN ALBUM
+    # =========================
 
-        else:
+    if data.startswith("album::"):
+        album_id = int(data.split("::")[1])
 
-            artist = search_artist(
-                text
-            )
+        album = get_album(album_id)
 
-            if artist:
+        caption = build_album_caption(album)
+        keyboard = build_service_buttons(album)
 
-                albums = (
-                    get_artist_albums(
-                        artist["id"]
-                    )
-                )
+        await query.message.reply_photo(
+            photo=album["cover_xl"],
+            caption=caption,
+            parse_mode="HTML",
+            reply_markup=keyboard,
+            message_thread_id=query.message.message_thread_id
+        )
 
-                buttons = []
+    # =========================
+    # ARTIST ALBUMS
+    # =========================
 
-                for album_item in albums[:20]:
+    elif data.startswith("artist::"):
+        artist_name = data.split("::")[1]
 
-                    buttons.append([
-                        InlineKeyboardButton(
-                            album_item[
-                                "title"
-                            ],
-                            callback_data=(
-                                f"album:{album_item['id']}"
-                            )
-                        )
-                    ])
+        albums = search_album(artist_name)
 
-                keyboard = (
-                    InlineKeyboardMarkup(
-                        buttons
-                    )
-                )
-
-                await context.bot.send_message(
-                    chat_id=(
-                        update.message.chat_id
-                    ),
-                    text=(
-                        f"Albums by "
-                        f"{artist['name']}:"
-                    ),
-                    reply_markup=keyboard
-                )
-
-                return
-
-            album = search_album(
-                text
-            )
-
-        if not album:
-
-            await context.bot.send_message(
-                chat_id=(
-                    update.message.chat_id
-                ),
-                text="Album not found."
-            )
-
+        if not albums:
             return
 
-        await send_album(
-            context,
-            update.message.chat_id,
-            album
+        keyboard = []
+
+        for album in albums[:10]:
+            keyboard.append([
+                InlineKeyboardButton(
+                    album["title"],
+                    callback_data=f"album::{album['id']}"
+                )
+            ])
+
+        await query.message.reply_text(
+            f"Albums by {artist_name}:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            message_thread_id=query.message.message_thread_id
         )
 
-    except Exception as e:
 
-        print(e)
-
-        await context.bot.send_message(
-            chat_id=(
-                update.message.chat_id
-            ),
-            text=f"Error:\n{e}"
-        )
-
+# =========================
+# MAIN
+# =========================
 
 def main():
-
-    app = (
+    application = (
         Application.builder()
-        .token(BOT_TOKEN)
+        .token(TOKEN)
         .build()
     )
 
-    app.add_handler(
+    application.add_handler(
         MessageHandler(
-            filters.TEXT
-            & ~filters.COMMAND,
+            filters.TEXT & ~filters.COMMAND,
             handle_message
         )
     )
 
-    app.add_handler(
-        CallbackQueryHandler(
-            handle_callback
-        )
+    application.add_handler(
+        CallbackQueryHandler(handle_buttons)
     )
 
     print("Bot started.")
 
-    app.run_polling()
+    application.run_polling()
 
 
 if __name__ == "__main__":
+    from threading import Thread
+
+    port = int(os.environ.get("PORT", 10000))
+
+    Thread(
+        target=lambda: app_flask.run(
+            host="0.0.0.0",
+            port=port
+        )
+    ).start()
+
     main()
