@@ -1,12 +1,13 @@
 import os
 import re
+import asyncio
 import requests
 from io import BytesIO
 from flask import Flask, request
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Bot
-from telegram.ext import Dispatcher, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
-# Импорт ваших модулей
+# Подключаем ваши модули для парсинга ссылок и работы с Deezer
 from music_parser import parse_music_url
 from deezer import get_album_tracks, search_artist_albums, search_artist
 
@@ -15,13 +16,12 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 TARGET_THREAD_ID = os.getenv("TARGET_THREAD_ID")
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-bot = Bot(token=BOT_TOKEN)
-dispatcher = Dispatcher(bot, None)
-
+# Создаём экземпляр Flask
 flask_app = Flask(__name__)
 
-# ---------- Вспомогательные функции ----------
+# ---------- Вспомогательные функции (они остаются без изменений) ----------
 def clean_query(text: str) -> str:
+    # Очистка запроса от скобок и невидимых символов
     if not text:
         return ""
     text = re.sub(r'[\u200e\u200f\u202a-\u202e]', '', text)
@@ -38,7 +38,7 @@ def format_duration(seconds: int) -> str:
         return f"{hours}:{minutes:02}:{secs:02}"
     return f"{minutes}:{secs:02}"
 
-# ---------- Deezer API helpers ----------
+# ---------- Deezer API helpers (функции для поиска альбомов) ----------
 def deezer_search_album(query: str) -> dict | None:
     try:
         resp = requests.get("https://api.deezer.com/search/album", params={"q": query}, timeout=15)
@@ -89,7 +89,7 @@ def extract_deezer_id(url: str) -> int | None:
             pass
     return None
 
-# ---------- Построение сообщения ----------
+# ---------- Построение сообщения с альбомом (функции не меняются) ----------
 def build_album_caption(album_info: dict) -> str:
     tracklist = "\n".join(album_info["tracks"])
     raw_date = album_info.get("release_date", "")
@@ -164,7 +164,7 @@ async def send_album(update: Update, context: ContextTypes.DEFAULT_TYPE, album_i
         **kwargs
     )
 
-# ---------- Обработчики ----------
+# ---------- Обработчики (теперь они работают без Dispatcher) ----------
 async def handle_artist_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -246,33 +246,48 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"🔥 Error: {e}")
         await update.message.reply_text(f"Error: {str(e)}")
 
-# ---------- Регистрация обработчиков в диспетчер ----------
-dispatcher.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-dispatcher.add_handler(CallbackQueryHandler(handle_artist_buttons, pattern=r"^artist::"))
-dispatcher.add_handler(CallbackQueryHandler(handle_album_buttons, pattern=r"^album::"))
-
-# ---------- Flask endpoints ----------
-@flask_app.route("/", methods=["GET", "POST"])
-def webhook():
-    if request.method == "POST":
-        update = Update.de_json(request.get_json(force=True), bot)
-        dispatcher.process_update(update)
-        return "OK", 200
-    return "Bot is running!"
-
-@flask_app.route("/healthcheck")
-def healthcheck():
-    return "OK", 200
+# ---------- Главная функция для настройки вебхука ----------
+async def setup_webhook(application: Application):
+    """Устанавливает вебхук при запуске бота."""
+    # Домен из переменной окружения Render
+    external_hostname = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+    if not external_hostname:
+        print("RENDER_EXTERNAL_HOSTNAME not set. Webhook not configured.")
+        return
+    webhook_url = f"https://{external_hostname}/webhook"
+    await application.bot.set_webhook(webhook_url)
+    print(f"✅ Webhook set to {webhook_url}")
 
 # ---------- Запуск ----------
 if __name__ == "__main__":
-    # Устанавливаем вебхук при старте
-    external_hostname = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
-    if external_hostname:
-        webhook_url = f"https://{external_hostname}/"
-        bot.set_webhook(webhook_url)
-        print(f"Webhook set to {webhook_url}")
-    else:
-        print("RENDER_EXTERNAL_HOSTNAME not set, using localhost for testing")
+    # Создаём приложение через Application.builder()
+    application = Application.builder().token(BOT_TOKEN).build()
+    
+    # Добавляем обработчики (все асинхронные функции)
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(CallbackQueryHandler(handle_artist_buttons, pattern=r"^artist::"))
+    application.add_handler(CallbackQueryHandler(handle_album_buttons, pattern=r"^album::"))
+
+    # Путь для вебхука, куда Telegram будет присылать запросы
+    @flask_app.route("/webhook", methods=["POST"])
+    async def webhook():
+        """Обработка входящих обновлений."""
+        # Преобразуем JSON-запрос в объект Update
+        update = Update.de_json(request.get_json(force=True), application.bot)
+        # Передаём обновление в приложение
+        await application.process_update(update)
+        return "OK", 200
+
+    @flask_app.route("/healthcheck")
+    def healthcheck():
+        """Проверка здоровья для Render."""
+        return "OK", 200
+
+    # Устанавливаем вебхук перед запуском сервера
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(setup_webhook(application))
+    
+    # Запускаем Flask-сервер
     port = int(os.environ.get("PORT", 10000))
     flask_app.run(host="0.0.0.0", port=port)
