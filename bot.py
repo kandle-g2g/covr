@@ -20,6 +20,8 @@ TARGET_THREAD_ID = int(os.getenv("TARGET_THREAD_ID", "0"))
 
 app_flask = Flask(__name__)
 
+from music_parser import extract_album_info_from_url
+
 
 @app_flask.route("/")
 def home():
@@ -241,26 +243,37 @@ async def send_album(
 # MESSAGE HANDLER
 # =========================
 
-async def handle_message(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-    if not update.message:
-        return
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ... (фильтр по теме, thread_id) ...
 
-    # =========================
-    # THREAD FILTER
-    # =========================
+    raw_text = update.message.text.strip()
+    query = clean(raw_text)
 
-    if update.effective_chat.type in ["group", "supergroup"]:
-        thread_id = update.message.message_thread_id
+    # --- НОВАЯ УНИВЕРСАЛЬНАЯ ОБРАБОТКА ССЫЛОК ---
+    # Список доменов/маркеров музыкальных платформ
+    music_domains = [
+        "spotify.com/album", "deezer.com/album", "music.apple.com",
+        "tidal.com/browse/album", "music.youtube.com", "soundcloud.com/sets"
+    ]
+    
+    if any(domain in raw_text for domain in music_domains):
+        
+        try:
+            metadata = extract_album_info_from_url(raw_text)
+            # Формируем поисковый запрос для Deezer
+            query = f"{metadata['artists']} {metadata['album_name']}"
+        
+        except Exception as e:
+            await update.message.reply_text(
+                f"Ошибка при разборе ссылки:\n{e}",
+                message_thread_id=update.message.message_thread_id
+            )
 
-        if TARGET_THREAD_ID and thread_id != TARGET_THREAD_ID:
             return
+    # -----------------------------------------
 
-    query = clean(update.message.text)
-
-    results = search_album(query)
+    # Далее идёт ваш существующий код (поиск альбомов в Deezer и т.д.)
+    results = search_album(query)   # <-- это из deezer.py
 
     if not results:
         await update.message.reply_text(
@@ -268,6 +281,8 @@ async def handle_message(
             message_thread_id=update.message.message_thread_id
         )
         return
+
+    # ... (построение клавиатуры выбора альбома, отправка) ...
 
     keyboard = []
     added = set()
