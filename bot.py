@@ -250,15 +250,31 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = clean(raw_text)
 
     music_domains = [
-        "spotify.com/album", "deezer.com/album", "music.apple.com",
-        "tidal.com/browse/album", "music.youtube.com", "soundcloud.com/sets"
+        "spotify.com/album",
+        "open.spotify.com/album",
+        "deezer.com/album",
+        "music.apple.com",
+        "itunes.apple.com",
+        "tidal.com/browse/album",
+        "listen.tidal.com/album",
+        "music.youtube.com",
+        "youtube.com/playlist",
+        "youtu.be",
+        "soundcloud.com/sets"
     ]
 
-    if any(domain in raw_text for domain in music_domains):
+    if any(domain in raw_text.lower() for domain in music_domains):
 
         try:
             metadata = extract_album_info_from_url(raw_text)
-            query = f"{metadata['artists']} {metadata['album_name']}"
+
+            # DEBUG
+            print("LINK PARSED:", metadata)
+
+            # Формируем корректный запрос
+            query = clean(
+                f"{metadata['artists']} {metadata['album_name']}"
+            )
 
         except Exception as e:
             await update.message.reply_text(
