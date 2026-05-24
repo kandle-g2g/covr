@@ -41,7 +41,6 @@ def format_duration(seconds):
     minutes = (seconds % 3600) // 60
     sec = seconds % 60
 
-    # если меньше часа
     if hours == 0:
         return f"{minutes}:{sec:02}"
 
@@ -69,10 +68,6 @@ def get_album(album_id):
     url = f"https://api.deezer.com/album/{album_id}"
     album = requests.get(url).json()
 
-    # =========================
-    # ПОЛУЧАЕМ ВСЕ ТРЕКИ
-    # =========================
-
     all_tracks = []
 
     tracks_url = f"https://api.deezer.com/album/{album_id}/tracks"
@@ -85,10 +80,6 @@ def get_album(album_id):
         tracks_url = response.get("next")
 
     album["tracks"]["data"] = all_tracks
-
-    # =========================
-    # ПЕРЕСЧИТЫВАЕМ ДЛИТЕЛЬНОСТЬ
-    # =========================
 
     total_duration = sum(
         track.get("duration", 0)
@@ -105,7 +96,6 @@ def get_album(album_id):
 def build_album_caption(album):
     title = album["title"]
 
-    # ВСЕ артисты
     contributors = album.get("contributors", [])
 
     if contributors:
@@ -119,7 +109,6 @@ def build_album_caption(album):
     duration = format_duration(album["duration"])
     tracks_count = album["nb_tracks"]
 
-    # красивая дата
     formatted_date = release_date
 
     try:
@@ -208,7 +197,6 @@ async def send_album(
     elif update.callback_query:
         thread_id = update.callback_query.message.message_thread_id
 
-    # скачиваем обложку
     response = requests.get(image_url)
 
     with tempfile.NamedTemporaryFile(
@@ -229,9 +217,7 @@ async def send_album(
 
         await update.effective_chat.send_document(
             document=cover_file,
-
             filename=f"{album_name}.jpg",
-
             caption=caption,
             parse_mode="HTML",
             reply_markup=keyboard,
@@ -244,25 +230,36 @@ async def send_album(
 # =========================
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ... (фильтр по теме, thread_id) ...
+
+    chat = update.effective_chat
+
+    # =========================
+    # РАЗРЕШАЕМ:
+    # 1. ЛИЧНЫЕ СООБЩЕНИЯ
+    # 2. ТОЛЬКО ОДНУ ТЕМУ В ГРУППЕ
+    # =========================
+
+    if chat.type != "private":
+
+        current_thread_id = update.message.message_thread_id
+
+        if current_thread_id != TARGET_THREAD_ID:
+            return
 
     raw_text = update.message.text.strip()
     query = clean(raw_text)
 
-    # --- НОВАЯ УНИВЕРСАЛЬНАЯ ОБРАБОТКА ССЫЛОК ---
-    # Список доменов/маркеров музыкальных платформ
     music_domains = [
         "spotify.com/album", "deezer.com/album", "music.apple.com",
         "tidal.com/browse/album", "music.youtube.com", "soundcloud.com/sets"
     ]
-    
+
     if any(domain in raw_text for domain in music_domains):
-        
+
         try:
             metadata = extract_album_info_from_url(raw_text)
-            # Формируем поисковый запрос для Deezer
             query = f"{metadata['artists']} {metadata['album_name']}"
-        
+
         except Exception as e:
             await update.message.reply_text(
                 f"Ошибка при разборе ссылки:\n{e}",
@@ -270,10 +267,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
             return
-    # -----------------------------------------
 
-    # Далее идёт ваш существующий код (поиск альбомов в Deezer и т.д.)
-    results = search_album(query)   # <-- это из deezer.py
+    results = search_album(query)
 
     if not results:
         await update.message.reply_text(
@@ -281,8 +276,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message_thread_id=update.message.message_thread_id
         )
         return
-
-    # ... (построение клавиатуры выбора альбома, отправка) ...
 
     keyboard = []
     added = set()
@@ -323,20 +316,21 @@ async def handle_buttons(
     query = update.callback_query
     await query.answer()
 
-    data = query.data
+    chat = query.message.chat
 
-    # =========================
-    # OPEN ALBUM
-    # =========================
+    if chat.type != "private":
+
+        current_thread_id = query.message.message_thread_id
+
+        if current_thread_id != TARGET_THREAD_ID:
+            return
+
+    data = query.data
 
     if data.startswith("album::"):
         album_id = int(data.split("::")[1])
 
         await send_album(update, context, album_id)
-
-    # =========================
-    # ARTIST ALBUMS
-    # =========================
 
     elif data.startswith("artist::"):
         artist_name = data.split("::")[1]
