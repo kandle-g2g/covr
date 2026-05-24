@@ -140,9 +140,13 @@ async def send_album(
     elif update.callback_query:
         thread_id = update.callback_query.message.message_thread_id
 
-    await update.effective_chat.send_photo(
-        photo=image,
-        caption=caption,
+    text = (
+        f'<a href="{image}">\u200b</a>'
+        f"{caption}"
+    )
+
+    await update.effective_chat.send_message(
+        text=text,
         parse_mode="HTML",
         reply_markup=keyboard,
         message_thread_id=thread_id
@@ -180,10 +184,6 @@ async def handle_message(
             message_thread_id=update.message.message_thread_id
         )
         return
-
-    # =========================
-    # MULTIPLE RESULTS
-    # =========================
 
     keyboard = []
     added = set()
@@ -238,9 +238,13 @@ async def handle_buttons(
         caption = build_album_caption(album)
         keyboard = build_service_buttons(album)
 
-        await query.message.reply_photo(
-            photo=album["cover_xl"],
-            caption=caption,
+        text = (
+            f'<a href="{album["cover_xl"]}">\u200b</a>'
+            f"{caption}"
+        )
+
+        await query.message.reply_text(
+            text=text,
             parse_mode="HTML",
             reply_markup=keyboard,
             message_thread_id=query.message.message_thread_id
