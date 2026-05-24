@@ -204,7 +204,7 @@ async def send_album(update: Update, context: ContextTypes.DEFAULT_TYPE, album_i
 # ---------- Обработчики команд ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🎵 *Music Album Bot*\n\n"
+        "🎵 *Covr bot*\n\n"
         "Send me:\n"
         "• an album name (e.g., *Graduation*)\n"
         "• an artist name (e.g., *Kanye West*) – I'll show their albums\n"
