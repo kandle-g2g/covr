@@ -1,14 +1,15 @@
 import os
 import re
 import requests
-from urllib.parse import quote
 
+from bs4 import BeautifulSoup
+from urllib.parse import quote
 from telegram import (
     Update,
     InlineKeyboardButton,
-    InlineKeyboardMarkup
+    InlineKeyboardMarkup,
+    InputFile
 )
-
 from telegram.ext import (
     Application,
     MessageHandler,
@@ -16,14 +17,172 @@ from telegram.ext import (
     filters
 )
 
-from deezer import search_album
-from spotify_parser import extract_album_name
-
+# =========================
+# НАСТРОЙКИ
+# =========================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# ID нужной подтемы
-ALLOWED_THREAD_ID = 2
+# ID подтемы (если не нужен — оставь None)
+TARGET_THREAD_ID = None
+
+# =========================
+# PARSERS
+# =========================
+
+def extract_title_from_page(url):
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0"
+        )
+    }
+
+    response = requests.get(
+        url,
+        headers=headers,
+        timeout=15
+    )
+
+    soup = BeautifulSoup(
+        response.text,
+        "html.parser"
+    )
+
+    title = soup.find("title")
+
+    if not title:
+        return None
+
+    text = title.text.strip()
+
+    # Spotify
+    text = text.replace(
+        " - Album by ",
+        "|"
+    )
+
+    # Apple Music
+    text = text.replace(
+        " - Apple Music",
+        ""
+    )
+
+    text = text.split("|")[0]
+
+    return text.strip()
+
+
+def extract_deezer_album_id(url):
+
+    match = re.search(
+        r"album/(\d+)",
+        url
+    )
+
+    if not match:
+        return None
+
+    return match.group(1)
+
+# =========================
+# DEEZER API
+# =========================
+
+def get_all_tracks(tracklist_url):
+
+    all_tracks = []
+
+    url = tracklist_url
+
+    while url:
+
+        response = requests.get(
+            url,
+            timeout=15
+        )
+
+        data = response.json()
+
+        all_tracks.extend(
+            data.get("data", [])
+        )
+
+        url = data.get("next")
+
+    return all_tracks
+
+
+def get_album_by_id(album_id):
+
+    response = requests.get(
+        f"https://api.deezer.com/album/{album_id}",
+        timeout=15
+    )
+
+    album = response.json()
+
+    album["full_tracks"] = (
+        get_all_tracks(
+            album["tracklist"]
+        )
+    )
+
+    return album
+
+
+def search_album(query):
+
+    response = requests.get(
+        "https://api.deezer.com/search/album",
+        params={
+            "q": query
+        },
+        timeout=15
+    )
+
+    data = response.json()
+
+    albums = data.get("data")
+
+    if not albums:
+        return None
+
+    album_id = albums[0]["id"]
+
+    return get_album_by_id(album_id)
+
+# =========================
+# HELPERS
+# =========================
+
+def format_release_date(date_string):
+
+    months = {
+        "01": "January",
+        "02": "February",
+        "03": "March",
+        "04": "April",
+        "05": "May",
+        "06": "June",
+        "07": "July",
+        "08": "August",
+        "09": "September",
+        "10": "October",
+        "11": "November",
+        "12": "December"
+    }
+
+    parts = date_string.split("-")
+
+    if len(parts) != 3:
+        return date_string
+
+    year, month, day = parts
+
+    month_name = months.get(month, month)
+
+    return f"{month_name} {int(day)}, {year}"
 
 
 def format_duration(seconds):
@@ -37,6 +196,9 @@ def format_duration(seconds):
 
     return f"{minutes:02}:{secs:02}"
 
+# =========================
+# MAIN HANDLER
+# =========================
 
 async def handle_message(
     update: Update,
@@ -46,14 +208,12 @@ async def handle_message(
     if not update.message:
         return
 
-    # Работа в ЛС + фильтр подтемы
-    chat_type = update.effective_chat.type
-
-    if chat_type in ["group", "supergroup"]:
+    # Фильтр по подтеме
+    if TARGET_THREAD_ID is not None:
 
         if (
             update.message.message_thread_id
-            != ALLOWED_THREAD_ID
+            != TARGET_THREAD_ID
         ):
             return
 
@@ -62,25 +222,62 @@ async def handle_message(
     if not text:
         return
 
-    spotify_match = re.search(
-        r"(https?://open\.spotify\.com/album/[^\s]+)",
-        text
-    )
-
-    if not spotify_match:
-        return
-
-    spotify_url = spotify_match.group(1)
+    album = None
 
     try:
 
-        album_name = extract_album_name(
-            spotify_url
-        )
+        # =========================
+        # SPOTIFY
+        # =========================
 
-        album = search_album(
-            album_name
-        )
+        if "open.spotify.com" in text:
+
+            title = extract_title_from_page(
+                text
+            )
+
+            if title:
+                album = search_album(title)
+
+        # =========================
+        # APPLE MUSIC
+        # =========================
+
+        elif "music.apple.com" in text:
+
+            title = extract_title_from_page(
+                text
+            )
+
+            if title:
+                album = search_album(title)
+
+        # =========================
+        # DEEZER
+        # =========================
+
+        elif "deezer.com" in text:
+
+            album_id = extract_deezer_album_id(
+                text
+            )
+
+            if album_id:
+                album = get_album_by_id(
+                    album_id
+                )
+
+        # =========================
+        # ПРОСТО ПОИСК
+        # =========================
+
+        else:
+
+            album = search_album(text)
+
+        # =========================
+        # НЕ НАЙДЕНО
+        # =========================
 
         if not album:
 
@@ -90,73 +287,121 @@ async def handle_message(
 
             return
 
-        title = album["title"]
+        # =========================
+        # DATA
+        # =========================
 
-        artists = ", ".join(
-            artist["name"]
-            for artist in album["contributors"]
+        title = album.get("title", "Unknown")
+
+        artists_list = []
+
+        contributors = album.get(
+            "contributors",
+            []
         )
 
-        release_date = album["release_date"]
+        if contributors:
 
-        year, month, day = release_date.split("-")
+            for artist in contributors:
 
-        months = {
-            "01": "January",
-            "02": "February",
-            "03": "March",
-            "04": "April",
-            "05": "May",
-            "06": "June",
-            "07": "July",
-            "08": "August",
-            "09": "September",
-            "10": "October",
-            "11": "November",
-            "12": "December"
-        }
+                name = artist.get("name")
 
-        release_date = (
-            f"{months[month]} "
-            f"{int(day)}, "
-            f"{year}"
+                if (
+                    name
+                    and name not in artists_list
+                ):
+                    artists_list.append(name)
+
+        else:
+
+            main_artist = (
+                album.get("artist", {})
+                .get("name")
+            )
+
+            if main_artist:
+                artists_list.append(
+                    main_artist
+                )
+
+        artists = ", ".join(artists_list)
+
+        release_date = format_release_date(
+            album.get(
+                "release_date",
+                "Unknown"
+            )
         )
 
-        tracks = album["full_tracks"]
+        tracks = album.get(
+            "full_tracks",
+            []
+        )
 
-        track_count = len(tracks)
+        total_tracks = len(tracks)
 
         total_duration = sum(
-            track["duration"]
+            track.get("duration", 0)
             for track in tracks
         )
 
-        album_duration = format_duration(
+        duration_text = format_duration(
             total_duration
         )
 
-        tracklist = "\n".join(
-            track["title"]
-            for track in tracks
+        cover_url = (
+            album.get("cover_xl")
+            or album.get("cover_big")
+            or album.get("cover")
         )
 
-        message = (
+        # =========================
+        # TRACKLIST
+        # =========================
+
+        track_lines = []
+
+        for track in tracks:
+
+            track_name = track.get(
+                "title",
+                "Unknown Track"
+            )
+
+            track_lines.append(
+                track_name
+            )
+
+        tracklist = "\n".join(track_lines)
+
+        # =========================
+        # TEXT
+        # =========================
+
+        caption = (
             f"🎵 {title}\n\n"
             f"👥 {artists}\n\n"
             f"📅 {release_date}\n"
-            f"💿 {track_count} tracks\n"
-            f"⏱ {album_duration}\n\n"
+            f"💿 {total_tracks} tracks\n"
+            f"⏱ {duration_text}\n\n"
             f"{tracklist}"
         )
 
-        apple_query = quote(
-            f"{title} {artists}"
+        # =========================
+        # BUTTONS
+        # =========================
+
+        spotify_url = (
+            f"https://open.spotify.com/search/"
+            f"{quote(title + ' ' + artists)}"
         )
 
         apple_music_url = (
             "https://music.apple.com/us/search"
-            f"?term={apple_query}"
+            f"?term={quote(title + ' ' + artists)}"
         )
+
+        deezer_url = album.get("link")
 
         keyboard = InlineKeyboardMarkup([
             [
@@ -167,7 +412,7 @@ async def handle_message(
 
                 InlineKeyboardButton(
                     "Deezer",
-                    url=album["link"]
+                    url=deezer_url
                 ),
 
                 InlineKeyboardButton(
@@ -177,20 +422,51 @@ async def handle_message(
             ]
         ])
 
-        # Получаем оригинальную обложку
-        image_response = requests.get(
-            album["cover_xl"]
-        )
+        # =========================
+        # COVER
+        # =========================
 
-        image_bytes = image_response.content
+        if cover_url:
 
-        # Отправляем как файл
-        await update.message.reply_document(
-            document=image_bytes,
-            filename=f"{title}.jpg",
-            caption=message,
-            reply_markup=keyboard
-        )
+            image_response = requests.get(
+                cover_url,
+                timeout=15
+            )
+
+            image_data = image_response.content
+
+            filename = (
+                f"{title}.jpg"
+            )
+
+            with open(
+                filename,
+                "wb"
+            ) as f:
+                f.write(image_data)
+
+            with open(
+                filename,
+                "rb"
+            ) as photo:
+
+                await update.message.reply_document(
+                    document=InputFile(
+                        photo,
+                        filename=filename
+                    ),
+                    caption=caption,
+                    reply_markup=keyboard
+                )
+
+            os.remove(filename)
+
+        else:
+
+            await update.message.reply_text(
+                caption,
+                reply_markup=keyboard
+            )
 
     except Exception as e:
 
@@ -200,6 +476,9 @@ async def handle_message(
             f"Error:\n{e}"
         )
 
+# =========================
+# MAIN
+# =========================
 
 def main():
 
@@ -211,12 +490,13 @@ def main():
 
     app.add_handler(
         MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
+            filters.TEXT
+            & ~filters.COMMAND,
             handle_message
         )
     )
 
-    print("Бот запущен")
+    print("Bot started.")
 
     app.run_polling()
 

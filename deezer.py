@@ -22,12 +22,29 @@ def get_all_tracks(tracklist_url):
     return all_tracks
 
 
-def search_album(album_name):
+def get_album_by_id(album_id):
+
+    response = requests.get(
+        f"https://api.deezer.com/album/{album_id}"
+    )
+
+    album = response.json()
+
+    album["full_tracks"] = (
+        get_all_tracks(
+            album["tracklist"]
+        )
+    )
+
+    return album
+
+
+def search_album(query):
 
     response = requests.get(
         "https://api.deezer.com/search/album",
         params={
-            "q": album_name
+            "q": query
         }
     )
 
@@ -40,17 +57,4 @@ def search_album(album_name):
 
     album_id = albums[0]["id"]
 
-    album_response = requests.get(
-        f"https://api.deezer.com/album/{album_id}"
-    )
-
-    album_data = album_response.json()
-
-    # Получаем ВСЕ треки
-    album_data["full_tracks"] = (
-        get_all_tracks(
-            album_data["tracklist"]
-        )
-    )
-
-    return album_data
+    return get_album_by_id(album_id)
