@@ -5,7 +5,17 @@ import re
 
 def extract_title_from_page(url):
 
-    response = requests.get(url)
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0"
+        )
+    }
+
+    response = requests.get(
+        url,
+        headers=headers,
+        timeout=15
+    )
 
     soup = BeautifulSoup(
         response.text,
@@ -17,7 +27,7 @@ def extract_title_from_page(url):
     if not title:
         return None
 
-    text = title.text
+    text = title.text.strip()
 
     # Spotify
     text = text.replace(
