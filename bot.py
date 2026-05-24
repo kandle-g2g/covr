@@ -3,18 +3,17 @@ import re
 import asyncio
 import requests
 from io import BytesIO
-from flask import Flask, request, jsonify
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.ext import Application, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
+# Импортируйте ваши модули (убедитесь, что они есть в проекте)
 from music_parser import parse_music_url
 from deezer import get_album_tracks, search_artist_albums, search_artist
 
+# ---------- Конфигурация ----------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TARGET_THREAD_ID = os.getenv("TARGET_THREAD_ID")
 HEADERS = {"User-Agent": "Mozilla/5.0"}
-
-flask_app = Flask(__name__)
 
 # ---------- Вспомогательные функции ----------
 def clean_query(text: str) -> str:
@@ -242,55 +241,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"🔥 Error: {e}")
         await update.message.reply_text(f"Error: {str(e)}")
 
-# ---------- Создание и инициализация приложения ----------
-application = Application.builder().token(BOT_TOKEN).build()
-
-@flask_app.route("/webhook", methods=["POST"])
-def webhook():
-    print("📨 Webhook received")  # Лог в консоль Render
-    json_data = request.get_json(force=True)
-    print(f"📦 Update: {json_data}")
-    update = Update.de_json(json_data, application.bot)
-    # Обрабатываем в отдельном цикле
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(application.process_update(update))
-    return "OK", 200
-
-@flask_app.route("/healthcheck")
-def healthcheck():
-    return "OK", 200
-
-@flask_app.route("/setwebhook", methods=["GET"])
-def set_webhook_manually():
-    """Временный endpoint для ручной установки вебхука"""
-    webhook_url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME', 'localhost')}/webhook"
-    resp = requests.post(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook",
-        data={"url": webhook_url}
-    )
-    return jsonify(resp.json())
+# ---------- Запуск polling ----------
+def main():
+    application = Application.builder().token(BOT_TOKEN).build()
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(CallbackQueryHandler(handle_artist_buttons, pattern=r"^artist::"))
+    application.add_handler(CallbackQueryHandler(handle_album_buttons, pattern=r"^album::"))
+    
+    print("✅ Бот запущен в режиме polling, слушаем сообщения...")
+    application.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
-    # Инициализация приложения
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(application.initialize())
-    
-    # Устанавливаем вебхук при запуске (с проверкой)
-    external_hostname = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
-    if external_hostname:
-        webhook_url = f"https://{external_hostname}/webhook"
-        # Установка через requests для получения ответа
-        resp = requests.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook",
-            data={"url": webhook_url}
-        )
-        print(f"Webhook set response: {resp.json()}")
-    else:
-        print("RENDER_EXTERNAL_HOSTNAME not set. Webhook not configured.")
-    
-    # Запускаем Flask
-    port = int(os.environ.get("PORT", 10000))
-    print(f"Starting Flask on port {port}")
-    flask_app.run(host="0.0.0.0", port=port)
+    main()
