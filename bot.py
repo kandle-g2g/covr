@@ -39,6 +39,10 @@ def format_duration(seconds):
     minutes = (seconds % 3600) // 60
     sec = seconds % 60
 
+    # если меньше часа
+    if hours == 0:
+        return f"{minutes}:{sec:02}"
+
     return f"{hours}:{minutes:02}:{sec:02}"
 
 
@@ -65,14 +69,23 @@ def get_album(album_id):
 
 
 def build_album_caption(album):
-    artist = album["artist"]["name"]
     title = album["title"]
+
+    # ВСЕ артисты
+    contributors = album.get("contributors", [])
+
+    if contributors:
+        artists = ", ".join(
+            dict.fromkeys([a["name"] for a in contributors])
+        )
+    else:
+        artists = album["artist"]["name"]
 
     release_date = album.get("release_date", "")
     duration = format_duration(album["duration"])
     tracks_count = album["nb_tracks"]
 
-    # формат даты
+    # красивая дата
     formatted_date = release_date
 
     try:
@@ -86,7 +99,7 @@ def build_album_caption(album):
 
     caption = (
         f"🎵 <b>{title}</b>\n\n"
-        f"👥 {artist}\n\n"
+        f"👥 {artists}\n\n"
         f"📅 {formatted_date}\n"
         f"💿 {tracks_count} tracks\n"
         f"⏳ {duration}\n\n"
@@ -163,7 +176,10 @@ async def send_album(
         caption=caption,
         parse_mode="HTML",
         reply_markup=keyboard,
+
+        # название файла = название альбома
         filename=f"{album['title']}.jpg",
+
         message_thread_id=thread_id
     )
 
