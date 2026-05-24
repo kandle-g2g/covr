@@ -35,8 +35,17 @@ def clean(text):
 
 
 def format_duration(seconds):
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    sec = seconds % 60
+
+    return f"{hours}:{minutes:02}:{sec:02}"
+
+
+def track_duration(seconds):
     minutes = seconds // 60
     sec = seconds % 60
+
     return f"{minutes}:{sec:02}"
 
 
@@ -59,24 +68,33 @@ def build_album_caption(album):
     artist = album["artist"]["name"]
     title = album["title"]
 
+    release_date = album.get("release_date", "")
     duration = format_duration(album["duration"])
     tracks_count = album["nb_tracks"]
 
+    # формат даты
+    formatted_date = release_date
+
+    try:
+        from datetime import datetime
+
+        dt = datetime.strptime(release_date, "%Y-%m-%d")
+        formatted_date = dt.strftime("%B %d, %Y")
+
+    except:
+        pass
+
     caption = (
-        f"🎵 <b>{title}</b>\n"
-        f"👤 {artist}\n"
-        f"⏳ {duration}\n"
-        f"🎼 {tracks_count} tracks\n\n"
+        f"🎵 <b>{title}</b>\n\n"
+        f"👥 {artist}\n\n"
+        f"📅 {formatted_date}\n"
+        f"💿 {tracks_count} tracks\n"
+        f"⏳ {duration}\n\n"
         f"---Tracklist---\n"
     )
 
-    for i, track in enumerate(album["tracks"]["data"], start=1):
-        track_duration = format_duration(track["duration"])
-
-        caption += (
-            f"\n{i}. {track['title']} "
-            f"({track_duration})"
-        )
+    for track in album["tracks"]["data"]:
+        caption += f"\n{track['title']}"
 
     return caption
 
@@ -140,15 +158,12 @@ async def send_album(
     elif update.callback_query:
         thread_id = update.callback_query.message.message_thread_id
 
-    text = (
-        f'<a href="{image}">\u200b</a>'
-        f"{caption}"
-    )
-
-    await update.effective_chat.send_message(
-        text=text,
+    await update.effective_chat.send_document(
+        document=image,
+        caption=caption,
         parse_mode="HTML",
         reply_markup=keyboard,
+        filename=f"{album['title']}.jpg",
         message_thread_id=thread_id
     )
 
@@ -233,22 +248,7 @@ async def handle_buttons(
     if data.startswith("album::"):
         album_id = int(data.split("::")[1])
 
-        album = get_album(album_id)
-
-        caption = build_album_caption(album)
-        keyboard = build_service_buttons(album)
-
-        text = (
-            f'<a href="{album["cover_xl"]}">\u200b</a>'
-            f"{caption}"
-        )
-
-        await query.message.reply_text(
-            text=text,
-            parse_mode="HTML",
-            reply_markup=keyboard,
-            message_thread_id=query.message.message_thread_id
-        )
+        await send_album(update, context, album_id)
 
     # =========================
     # ARTIST ALBUMS
