@@ -4,15 +4,15 @@ import asyncio
 import requests
 from io import BytesIO
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
-from telegram.ext import Application, MessageHandler, CallbackQueryHandler, ContextTypes, filters
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
-# Импортируйте ваши модули (убедитесь, что они есть в проекте)
+# Импортируйте ваши модули (пути могут отличаться – подставьте свои)
 from music_parser import parse_music_url
 from deezer import get_album_tracks, search_artist_albums, search_artist
 
 # ---------- Конфигурация ----------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-TARGET_THREAD_ID = os.getenv("TARGET_THREAD_ID")
+TARGET_THREAD_ID = os.getenv("TARGET_THREAD_ID")  # может быть None или строка
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 # ---------- Вспомогательные функции ----------
@@ -133,37 +133,67 @@ def build_album_buttons(album_info: dict) -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(keyboard)
 
+# ---------- Функция отправки альбома (с подробными логами) ----------
 async def send_album(update: Update, context: ContextTypes.DEFAULT_TYPE, album_id: int):
-    album_info = get_album_tracks(album_id)
+    print(f"📤 send_album called with album_id={album_id}")
+    try:
+        album_info = get_album_tracks(album_id)
+        print(f"✅ get_album_tracks success: {album_info['title']} ({album_info['track_count']} tracks)")
+    except Exception as e:
+        print(f"❌ Error in get_album_tracks: {e}")
+        await update.message.reply_text("Error fetching album from Deezer")
+        return
+
     caption = build_album_caption(album_info)
+    print(f"📝 Caption built, length={len(caption)}")
     buttons = build_album_buttons(album_info)
-    img_resp = requests.get(album_info["cover"], timeout=30)
+
+    try:
+        img_resp = requests.get(album_info["cover"], timeout=30)
+        print(f"🖼 Cover downloaded, size={len(img_resp.content)} bytes")
+    except Exception as e:
+        print(f"❌ Cover download error: {e}")
+        await update.message.reply_text("Error downloading cover")
+        return
+
     image_bytes = BytesIO(img_resp.content)
     safe_name = re.sub(r'[\\/*?:"<>|]', "", album_info["title"])
     image_bytes.name = f"{safe_name}.jpg"
 
     target = update.callback_query.message if update.callback_query else update.message
     if not target:
+        print("❌ No target message found")
         return
 
     kwargs = {}
     if TARGET_THREAD_ID and target.chat.type in ["group", "supergroup"]:
         kwargs["message_thread_id"] = int(TARGET_THREAD_ID)
+        print(f"🧵 Using message_thread_id={kwargs['message_thread_id']}")
 
-    await target.reply_document(
-        document=InputFile(image_bytes),
-        caption=caption,
-        reply_markup=buttons,
-        read_timeout=60,
-        write_timeout=60,
-        **kwargs
-    )
+    print("📤 Attempting to send document...")
+    try:
+        await target.reply_document(
+            document=InputFile(image_bytes),
+            caption=caption,
+            reply_markup=buttons,
+            read_timeout=60,
+            write_timeout=60,
+            **kwargs
+        )
+        print("✅ Document sent successfully")
+    except Exception as e:
+        print(f"❌ Failed to send document: {e}")
+        await update.message.reply_text(f"Error sending album: {e}")
 
-# ---------- Обработчики ----------
+# ---------- Обработчики команд и кнопок ----------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Bot is alive and listening!")
+
 async def handle_artist_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     artist_name = query.data.replace("artist::", "")
+    print(f"🎤 Artist button: {artist_name}")
     albums = search_artist_albums(artist_name)
     if not albums:
         await query.message.reply_text("Artist not found")
@@ -175,14 +205,17 @@ async def handle_album_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     await query.answer()
     album_id = int(query.data.replace("album::", ""))
+    print(f"💿 Album button: {album_id}")
     await send_album(update, context, album_id)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
+    # Фильтр по теме (ветке)
     if TARGET_THREAD_ID and update.message.chat.type in ["group", "supergroup"]:
         thread_id = getattr(update.message, "message_thread_id", None)
         if str(thread_id) != str(TARGET_THREAD_ID):
+            print(f"⚠️ Ignored message from thread {thread_id}, expected {TARGET_THREAD_ID}")
             return
 
     text = update.message.text.strip()
@@ -195,11 +228,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if deezer_id:
                 print(f"✅ Deezer direct ID: {deezer_id}")
                 await send_album(update, context, deezer_id)
+                print("➡️ send_album completed for Deezer link")
                 return
 
         # 2. Spotify ссылка
         if "spotify.com/album/" in text:
-            parsed = parse_music_url(text)
+            try:
+                parsed = parse_music_url(text)
+            except Exception as e:
+                print(f"Spotify parse error: {e}")
+                await update.message.reply_text("Error parsing Spotify link")
+                return
             if parsed:
                 album_name = clean_query(parsed["album_name"])
                 artists = clean_query(parsed["artists"])
@@ -207,11 +246,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 album = find_deezer_album_by_artist_and_title(album_name, artists)
                 if album:
                     await send_album(update, context, album["id"])
+                    print("➡️ send_album completed for Spotify link")
                     return
 
         # 3. Apple Music ссылка
         if "music.apple.com" in text:
-            parsed = parse_music_url(text)
+            try:
+                parsed = parse_music_url(text)
+            except Exception as e:
+                print(f"Apple Music parse error: {e}")
+                await update.message.reply_text("Error parsing Apple Music link")
+                return
             if parsed:
                 album_name = clean_query(parsed["album_name"])
                 artists = clean_query(parsed["artists"])
@@ -219,6 +264,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 album = find_deezer_album_by_artist_and_title(album_name, artists)
                 if album:
                     await send_album(update, context, album["id"])
+                    print("➡️ send_album completed for Apple Music link")
                     return
 
         # 4. Текстовый запрос: сначала ищем артиста
@@ -238,16 +284,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text("❌ Album not found")
     except Exception as e:
-        print(f"🔥 Error: {e}")
-        await update.message.reply_text(f"Error: {str(e)}")
+        print(f"🔥 Error in handle_message: {e}")
+        await update.message.reply_text(f"Internal error: {e}")
 
-# ---------- Запуск polling ----------
+# ---------- Запуск бота (polling) ----------
 def main():
+    # Удаляем возможный вебхук, чтобы polling работал
+    try:
+        import requests
+        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook")
+        print("✅ Webhook deleted")
+    except Exception as e:
+        print(f"Failed to delete webhook: {e}")
+
     application = Application.builder().token(BOT_TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(handle_artist_buttons, pattern=r"^artist::"))
     application.add_handler(CallbackQueryHandler(handle_album_buttons, pattern=r"^album::"))
-    
+
     print("✅ Бот запущен в режиме polling, слушаем сообщения...")
     application.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
 
