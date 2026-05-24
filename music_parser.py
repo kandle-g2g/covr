@@ -1,8 +1,11 @@
 import requests
 from bs4 import BeautifulSoup
+import re
+import json
 
 
 def clean_text(text):
+
     if not text:
         return ""
 
@@ -28,6 +31,58 @@ def clean_text(text):
     return text.strip()
 
 
+def extract_spotify_jsonld(html):
+
+    match = re.search(
+        r'<script type="application/ld\+json">(.*?)</script>',
+        html,
+        re.DOTALL
+    )
+
+    if not match:
+        return None
+
+    try:
+        data = json.loads(
+            match.group(1)
+        )
+
+        album_name = data.get("name")
+
+        artists = []
+
+        by_artist = data.get(
+            "byArtist"
+        )
+
+        if isinstance(by_artist, list):
+
+            for artist in by_artist:
+
+                if artist.get("name"):
+                    artists.append(
+                        artist["name"]
+                    )
+
+        elif isinstance(by_artist, dict):
+
+            if by_artist.get("name"):
+                artists.append(
+                    by_artist["name"]
+                )
+
+        cover = data.get("image")
+
+        return {
+            "album_name": album_name,
+            "artists": ", ".join(artists),
+            "cover": cover
+        }
+
+    except Exception:
+        return None
+
+
 def extract_album_info_from_url(url):
 
     headers = {
@@ -47,8 +102,35 @@ def extract_album_info_from_url(url):
         allow_redirects=True
     )
 
+    response.raise_for_status()
+
+    html = response.text
+
+    # =========================
+    # SPOTIFY JSON-LD
+    # =========================
+
+    if "spotify.com" in url:
+
+        parsed = extract_spotify_jsonld(
+            html
+        )
+
+        if parsed:
+
+            print(
+                "SPOTIFY JSON-LD:",
+                parsed
+            )
+
+            return parsed
+
+    # =========================
+    # FALLBACK HTML PARSER
+    # =========================
+
     soup = BeautifulSoup(
-        response.text,
+        html,
         "html.parser"
     )
 
@@ -56,21 +138,15 @@ def extract_album_info_from_url(url):
     artists = None
     cover = None
 
-    # =========================
-    # COVER
-    # =========================
-
     og_image = soup.find(
         "meta",
         property="og:image"
     )
 
     if og_image:
-        cover = og_image.get("content")
-
-    # =========================
-    # TITLE
-    # =========================
+        cover = og_image.get(
+            "content"
+        )
 
     og_title = soup.find(
         "meta",
@@ -91,10 +167,14 @@ def extract_album_info_from_url(url):
     raw_title = None
 
     if og_title:
-        raw_title = og_title.get("content")
+        raw_title = og_title.get(
+            "content"
+        )
 
     elif twitter_title:
-        raw_title = twitter_title.get("content")
+        raw_title = twitter_title.get(
+            "content"
+        )
 
     else:
         raw_title = page_title
@@ -102,12 +182,10 @@ def extract_album_info_from_url(url):
     raw_title = raw_title or ""
 
     # =========================
-    # SPOTIFY
+    # SPOTIFY FALLBACK
     # =========================
 
     if "spotify.com" in url:
-
-        # Donda (Deluxe) - Album by Kanye West | Spotify
 
         if " - Album by " in raw_title:
 
@@ -159,8 +237,6 @@ def extract_album_info_from_url(url):
 
     elif "music.apple.com" in url:
 
-        # Album Name by Artist on Apple Music
-
         if " by " in raw_title:
 
             parts = raw_title.split(
@@ -199,11 +275,8 @@ def extract_album_info_from_url(url):
                 "content"
             )
 
-    # =========================
-    # FALLBACK
-    # =========================
-
     else:
+
         album_name = clean_text(
             raw_title
         )
@@ -220,6 +293,9 @@ def extract_album_info_from_url(url):
         "cover": cover
     }
 
-    print("PARSED METADATA:", result)
+    print(
+        "FALLBACK PARSED:",
+        result
+    )
 
     return result
