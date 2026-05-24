@@ -5,7 +5,7 @@ import requests
 from io import BytesIO
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
+from telegram.ext import Application, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
 # Подключаем ваши модули для парсинга ссылок и работы с Deezer
 from music_parser import parse_music_url
@@ -16,12 +16,10 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 TARGET_THREAD_ID = os.getenv("TARGET_THREAD_ID")
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-# Создаём экземпляр Flask
 flask_app = Flask(__name__)
 
-# ---------- Вспомогательные функции (они остаются без изменений) ----------
+# ---------- Вспомогательные функции ----------
 def clean_query(text: str) -> str:
-    # Очистка запроса от скобок и невидимых символов
     if not text:
         return ""
     text = re.sub(r'[\u200e\u200f\u202a-\u202e]', '', text)
@@ -38,7 +36,7 @@ def format_duration(seconds: int) -> str:
         return f"{hours}:{minutes:02}:{secs:02}"
     return f"{minutes}:{secs:02}"
 
-# ---------- Deezer API helpers (функции для поиска альбомов) ----------
+# ---------- Deezer API helpers ----------
 def deezer_search_album(query: str) -> dict | None:
     try:
         resp = requests.get("https://api.deezer.com/search/album", params={"q": query}, timeout=15)
@@ -89,7 +87,7 @@ def extract_deezer_id(url: str) -> int | None:
             pass
     return None
 
-# ---------- Построение сообщения с альбомом (функции не меняются) ----------
+# ---------- Построение сообщения ----------
 def build_album_caption(album_info: dict) -> str:
     tracklist = "\n".join(album_info["tracks"])
     raw_date = album_info.get("release_date", "")
@@ -164,7 +162,7 @@ async def send_album(update: Update, context: ContextTypes.DEFAULT_TYPE, album_i
         **kwargs
     )
 
-# ---------- Обработчики (теперь они работают без Dispatcher) ----------
+# ---------- Обработчики ----------
 async def handle_artist_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -246,48 +244,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"🔥 Error: {e}")
         await update.message.reply_text(f"Error: {str(e)}")
 
-# ---------- Главная функция для настройки вебхука ----------
-async def setup_webhook(application: Application):
-    """Устанавливает вебхук при запуске бота."""
-    # Домен из переменной окружения Render
-    external_hostname = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
-    if not external_hostname:
-        print("RENDER_EXTERNAL_HOSTNAME not set. Webhook not configured.")
-        return
-    webhook_url = f"https://{external_hostname}/webhook"
+# ---------- Создание приложения и вебхук ----------
+application = Application.builder().token(BOT_TOKEN).build()
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+application.add_handler(CallbackQueryHandler(handle_artist_buttons, pattern=r"^artist::"))
+application.add_handler(CallbackQueryHandler(handle_album_buttons, pattern=r"^album::"))
+
+# Flask endpoints – теперь синхронные!
+@flask_app.route("/webhook", methods=["POST"])
+def webhook():
+    json_data = request.get_json(force=True)
+    update = Update.de_json(json_data, application.bot)
+    # Запускаем асинхронную обработку в новом event loop
+    asyncio.run(application.process_update(update))
+    return "OK", 200
+
+@flask_app.route("/healthcheck")
+def healthcheck():
+    return "OK", 200
+
+async def setup_webhook():
+    # Устанавливаем вебхук – можно вписать свой URL напрямую
+    # Замените "your-app-name" на реальное имя вашего сервиса на Render
+    webhook_url = "https://covr.onrender.com/webhook"
     await application.bot.set_webhook(webhook_url)
     print(f"✅ Webhook set to {webhook_url}")
 
-# ---------- Запуск ----------
 if __name__ == "__main__":
-    # Создаём приложение через Application.builder()
-    application = Application.builder().token(BOT_TOKEN).build()
-    
-    # Добавляем обработчики (все асинхронные функции)
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_handler(CallbackQueryHandler(handle_artist_buttons, pattern=r"^artist::"))
-    application.add_handler(CallbackQueryHandler(handle_album_buttons, pattern=r"^album::"))
-
-    # Путь для вебхука, куда Telegram будет присылать запросы
-    @flask_app.route("/webhook", methods=["POST"])
-    async def webhook():
-        """Обработка входящих обновлений."""
-        # Преобразуем JSON-запрос в объект Update
-        update = Update.de_json(request.get_json(force=True), application.bot)
-        # Передаём обновление в приложение
-        await application.process_update(update)
-        return "OK", 200
-
-    @flask_app.route("/healthcheck")
-    def healthcheck():
-        """Проверка здоровья для Render."""
-        return "OK", 200
-
-    # Устанавливаем вебхук перед запуском сервера
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(setup_webhook(application))
-    
-    # Запускаем Flask-сервер
+    # Установка вебхука перед запуском Flask
+    asyncio.run(setup_webhook())
     port = int(os.environ.get("PORT", 10000))
     flask_app.run(host="0.0.0.0", port=port)
