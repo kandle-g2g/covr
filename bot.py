@@ -1,10 +1,13 @@
 import os
 import re
+import threading
 import requests
 from io import BytesIO
+from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
+# Импортируйте ваши модули (убедитесь, что пути правильные)
 from music_parser import parse_music_url
 from deezer import get_album_tracks, search_artist_albums, search_artist
 
@@ -12,6 +15,17 @@ from deezer import get_album_tracks, search_artist_albums, search_artist
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TARGET_THREAD_ID = os.getenv("TARGET_THREAD_ID")
 HEADERS = {"User-Agent": "Mozilla/5.0"}
+
+# ---------- Flask для healthcheck (чтобы Render не убивал процесс) ----------
+flask_app = Flask(__name__)
+
+@flask_app.route("/healthcheck")
+def healthcheck():
+    return "OK", 200
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    flask_app.run(host="0.0.0.0", port=port)
 
 # ---------- Вспомогательные функции ----------
 def clean_query(text: str) -> str:
@@ -183,9 +197,8 @@ async def send_album(update: Update, context: ContextTypes.DEFAULT_TYPE, album_i
 
 # ---------- Обработчики команд ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Приветственное сообщение и инструкция."""
     await update.message.reply_text(
-        "🎵 *Covr Bot*\n\n"
+        "🎵 *Covr bot*\n\n"
         "Send me:\n"
         "• an album name (e.g., *Graduation*)\n"
         "• an artist name (e.g., *Kanye West*) – I'll show their albums\n"
@@ -291,14 +304,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"🔥 Error in handle_message: {e}")
         await update.message.reply_text(f"Internal error: {e}")
 
-# ---------- Запуск бота (polling) ----------
+# ---------- Запуск бота (polling + healthcheck сервер) ----------
 def main():
-    # Удаляем возможный вебхук
+    # Удаляем вебхук, чтобы polling работал
     try:
         requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook")
         print("✅ Webhook deleted")
     except Exception as e:
         print(f"Failed to delete webhook: {e}")
+
+    # Запускаем Flask healthcheck в отдельном потоке
+    threading.Thread(target=run_flask, daemon=True).start()
+    print("✅ Healthcheck server started on port 10000")
 
     application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
