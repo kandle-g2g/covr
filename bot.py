@@ -351,6 +351,8 @@ def get_album(album_id):
         if name and name not in artists:
             artists.append(name)
 
+    artist_data = data.get("artist", {})
+
     return {
         "title": data["title"],
         "artist": ", ".join(artists),
@@ -359,9 +361,20 @@ def get_album(album_id):
         "duration": format_duration(total_duration),
         "cover": data["cover_xl"],
         "tracks": tracks,
-        "deezer_url": data["link"],
-        "artist_url": data["artist"]["link"],
-        "artist_name": data["artist"]["name"]
+
+        "deezer_url": data.get("link"),
+
+        "artist_url": artist_data.get(
+            "link",
+            f"https://www.deezer.com/artist/{artist_data.get('id', '')}"
+        ),
+
+        "artist_name": artist_data.get(
+            "name",
+            artists[0] if artists else "Unknown Artist"
+        ),
+
+        "upc": data.get("upc")
     }
 
 
@@ -387,19 +400,7 @@ def build_album_buttons(album_info):
     title = album_info["title"]
     artist = album_info["artist_name"]
 
-    spotify_query = requests.utils.quote(
-        f"{artist} {title}"
-    )
-
-    tidal_query = requests.utils.quote(
-        f"{artist} {title}"
-    )
-
-    youtube_query = requests.utils.quote(
-        f"{artist} {title}"
-    )
-
-    soundcloud_query = requests.utils.quote(
+    query = requests.utils.quote(
         f"{artist} {title}"
     )
 
@@ -408,31 +409,31 @@ def build_album_buttons(album_info):
         [
             InlineKeyboardButton(
                 "Spotify",
-                url=f"https://open.spotify.com/search/{spotify_query}"
+                url=f"https://open.spotify.com/search/{query}"
             ),
 
             InlineKeyboardButton(
                 "Apple Music",
-                url=f"https://music.apple.com/us/search?term={spotify_query}"
+                url=f"https://music.apple.com/us/search?term={query}"
             )
         ],
 
         [
             InlineKeyboardButton(
                 "TIDAL",
-                url=f"https://listen.tidal.com/search?q={tidal_query}"
+                url=f"https://listen.tidal.com/search?q={query}"
             ),
 
             InlineKeyboardButton(
                 "YouTube",
-                url=f"https://www.youtube.com/results?search_query={youtube_query}"
+                url=f"https://music.youtube.com/search?q={query}"
             )
         ],
 
         [
             InlineKeyboardButton(
                 "SoundCloud",
-                url=f"https://soundcloud.com/search?q={soundcloud_query}"
+                url=f"https://soundcloud.com/search?q={query}"
             )
         ],
 
@@ -444,7 +445,9 @@ def build_album_buttons(album_info):
         ]
     ]
 
-    return InlineKeyboardMarkup(keyboard)
+    return InlineKeyboardMarkup(
+        keyboard
+    )
 
 
 async def send_album(
