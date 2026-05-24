@@ -306,9 +306,7 @@ async def handle_message(
 
 def main():
 
-    web_thread = Thread(target=run_web)
-    web_thread.daemon = True
-    web_thread.start()
+    Thread(target=run_web).start()
 
     app = ApplicationBuilder().token(
         BOT_TOKEN
@@ -338,9 +336,5 @@ def main():
     print("Bot started.")
 
     app.run_polling(
-        drop_pending_updates=True,
-        close_loop=False
+        drop_pending_updates=True
     )
-
-if __name__ == "__main__":
-    main()
