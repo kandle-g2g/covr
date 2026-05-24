@@ -121,7 +121,7 @@ async def handle_message(
             f"{year}"
         )
 
-        tracks = album["tracks"]["data"]
+        tracks = album["full_tracks"]
 
         track_count = len(tracks)
 
@@ -171,7 +171,7 @@ async def handle_message(
         # Отправляем как файл
         await update.message.reply_document(
             document=image_bytes,
-            filename="cover.jpg",
+            filename=f"{title}.jpg",
             caption=message,
             reply_markup=keyboard
         )
