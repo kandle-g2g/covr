@@ -65,7 +65,39 @@ def search_album(query):
 
 def get_album(album_id):
     url = f"https://api.deezer.com/album/{album_id}"
-    return requests.get(url).json()
+    album = requests.get(url).json()
+
+    # =========================
+    # ПОЛУЧАЕМ ВСЕ ТРЕКИ
+    # =========================
+
+    all_tracks = []
+
+    tracks_url = f"https://api.deezer.com/album/{album_id}/tracks"
+
+    while tracks_url:
+        response = requests.get(tracks_url).json()
+
+        all_tracks.extend(response.get("data", []))
+
+        tracks_url = response.get("next")
+
+    album["tracks"]["data"] = all_tracks
+
+    # =========================
+    # ПЕРЕСЧИТЫВАЕМ ДЛИТЕЛЬНОСТЬ
+    # =========================
+
+    total_duration = sum(
+        track.get("duration", 0)
+        for track in all_tracks
+    )
+
+    album["duration"] = total_duration
+
+    album["nb_tracks"] = len(all_tracks)
+
+    return album
 
 
 def build_album_caption(album):
@@ -151,6 +183,9 @@ def build_service_buttons(album):
 # SEND ALBUM
 # =========================
 
+import tempfile
+
+
 async def send_album(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -161,7 +196,7 @@ async def send_album(
     caption = build_album_caption(album)
     keyboard = build_service_buttons(album)
 
-    image = album["cover_xl"]
+    image_url = album["cover_xl"]
 
     thread_id = None
 
@@ -171,17 +206,35 @@ async def send_album(
     elif update.callback_query:
         thread_id = update.callback_query.message.message_thread_id
 
-    await update.effective_chat.send_document(
-        document=image,
-        caption=caption,
-        parse_mode="HTML",
-        reply_markup=keyboard,
+    # скачиваем обложку
+    response = requests.get(image_url)
 
-        # название файла = название альбома
-        filename=f"{album['title']}.jpg",
+    with tempfile.NamedTemporaryFile(
+        delete=False,
+        suffix=".jpg"
+    ) as temp_file:
 
-        message_thread_id=thread_id
+        temp_file.write(response.content)
+        temp_path = temp_file.name
+
+    album_name = re.sub(
+        r'[\\/*?:"<>|]',
+        "",
+        album["title"]
     )
+
+    with open(temp_path, "rb") as cover_file:
+
+        await update.effective_chat.send_document(
+            document=cover_file,
+
+            filename=f"{album_name}.jpg",
+
+            caption=caption,
+            parse_mode="HTML",
+            reply_markup=keyboard,
+            message_thread_id=thread_id
+        )
 
 
 # =========================
