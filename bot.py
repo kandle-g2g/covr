@@ -247,6 +247,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     raw_text = update.message.text.strip()
+
+    # извлекаем первую ссылку из сообщения
+    url_match = re.search(r"https?://[^\s]+", raw_text)
+    extracted_url = url_match.group(0) if url_match else None
+
     query = clean(raw_text)
 
     music_domains = [
@@ -263,18 +268,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "soundcloud.com/sets"
     ]
 
-    if any(domain in raw_text.lower() for domain in music_domains):
+    if extracted_url and any(domain in extracted_url.lower() for domain in music_domains):
 
         try:
-            metadata = extract_album_info_from_url(raw_text)
+            metadata = extract_album_info_from_url(extracted_url)
 
             # DEBUG
+            print("URL:", extracted_url)
             print("LINK PARSED:", metadata)
+            print("SEARCH QUERY:", query)
 
             # Формируем корректный запрос
             query = clean(
                 f"{metadata['artists']} {metadata['album_name']}"
             )
+
+            # fallback если артист unknown
+            if "unknown artist" in query.lower():
+                query = clean(metadata['album_name'])
 
         except Exception as e:
             await update.message.reply_text(
