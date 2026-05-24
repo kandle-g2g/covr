@@ -1,4 +1,3 @@
-# bot.py
 import os
 import re
 import requests
@@ -255,18 +254,49 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query = clean(raw_text)
 
+    # =========================
+    # ОБРАБОТКА МУЗЫКАЛЬНЫХ ССЫЛОК
+    # =========================
+
+    if extracted_url:
+
+        try:
+            metadata = extract_album_info_from_url(extracted_url)
+
+            print("URL:", extracted_url)
+            print("PARSED METADATA:", metadata)
+
+            album_name = clean(
+                metadata.get("album_name", "")
+            )
+
+            artists = clean(
+                metadata.get("artists", "")
+            )
+
+            # основной запрос
+            if artists and artists.lower() != "unknown artist":
+                query = clean(f"{artists} {album_name}")
+            else:
+                query = album_name
+
+            print("FINAL SEARCH QUERY:", query)
+
+        except Exception as e:
+            print("LINK PARSE ERROR:", e)
+
     music_domains = [
-        "spotify.com/album",
-        "open.spotify.com/album",
-        "deezer.com/album",
+        "spotify.com",
+        "open.spotify.com",
+        "deezer.com",
         "music.apple.com",
         "itunes.apple.com",
-        "tidal.com/browse/album",
-        "listen.tidal.com/album",
+        "tidal.com",
+        "listen.tidal.com",
         "music.youtube.com",
-        "youtube.com/playlist",
+        "youtube.com",
         "youtu.be",
-        "soundcloud.com/sets"
+        "soundcloud.com"
     ]
 
     if extracted_url and any(domain in extracted_url.lower() for domain in music_domains):
@@ -274,23 +304,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             metadata = extract_album_info_from_url(extracted_url)
 
-            # DEBUG
             print("URL:", extracted_url)
             print("LINK PARSED:", metadata)
-            print("SEARCH QUERY:", query)
 
-            # Формируем корректный запрос
-            query = clean(
-                f"{metadata['artists']} {metadata['album_name']}"
+            album_name = clean(
+                metadata.get("album_name", "")
             )
 
-            # fallback если артист unknown
-            if "unknown artist" in query.lower():
-                query = clean(metadata['album_name'])
+            artists = clean(
+                metadata.get("artists", "")
+            )
+
+            # Deezer лучше ищет по artist + album
+            if artists and artists.lower() != "unknown artist":
+                query = clean(
+                    f"{artists} {album_name}"
+                )
+            else:
+                query = album_name
+
+            print("SEARCH QUERY:", query)
 
         except Exception as e:
             await update.message.reply_text(
-                f"Ошибка при разборе ссылки:\n{e}",
+                f"Ошибка при разборе ссылки: {e}",
                 message_thread_id=update.message.message_thread_id
             )
 
@@ -309,7 +346,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             metadata = extract_album_info_from_url(extracted_url)
 
             fallback_query = clean(
-                metadata['album_name']
+                metadata.get('album_name', '')
             )
 
             print("FALLBACK QUERY:", fallback_query)
@@ -319,7 +356,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             print("FALLBACK ERROR:", e)
 
-    # fallback №2 — убираем лишние символы
+    # fallback №2 — artist отдельно
+    if not results and extracted_url:
+
+        try:
+            metadata = extract_album_info_from_url(extracted_url)
+
+            artist_query = clean(
+                metadata.get('artists', '')
+            )
+
+            print("ARTIST QUERY:", artist_query)
+
+            results = search_album(artist_query)
+
+        except Exception as e:
+            print("ARTIST FALLBACK ERROR:", e)
+
+    # fallback №3 — очищенный запрос
     if not results:
 
         simplified_query = re.sub(
