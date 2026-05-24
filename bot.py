@@ -497,17 +497,22 @@ def build_album_buttons(album_info):
 
         [
             InlineKeyboardButton(
-                "TIDAL",
-                url=f"https://listen.tidal.com/search?q={query}"
+                "Deezer",
+                url=f"https://www.deezer.com/search/{query}"
             ),
 
             InlineKeyboardButton(
-                "YouTube",
-                url=f"https://music.youtube.com/search?q={query}"
+                "TIDAL",
+                url=f"https://listen.tidal.com/search?q={query}"
             )
         ],
 
         [
+            InlineKeyboardButton(
+                "YouTube",
+                url=f"https://music.youtube.com/search?q={query}"
+            ),
+
             InlineKeyboardButton(
                 "SoundCloud",
                 url=f"https://soundcloud.com/search?q={query}"
@@ -525,7 +530,6 @@ def build_album_buttons(album_info):
     return InlineKeyboardMarkup(
         keyboard
     )
-
 
 async def send_album(
     update,
@@ -564,13 +568,28 @@ async def send_album(
         f"{safe_name}.jpg"
     )
 
+    target_message = None
+
+    if getattr(update, "callback_query", None):
+
+        target_message = (
+            update.callback_query.message
+        )
+
+    elif getattr(update, "message", None):
+
+        target_message = (
+            update.message
+        )
+
+    if not target_message:
+        return
+
     kwargs = {}
 
     if (
         TARGET_THREAD_ID
-        and hasattr(update, "message")
-        and update.message
-        and update.message.chat.type
+        and target_message.chat.type
         in ["group", "supergroup"]
     ):
 
@@ -578,22 +597,12 @@ async def send_album(
             TARGET_THREAD_ID
         )
 
-    if hasattr(update, "callback_query"):
-
-        await update.callback_query.message.reply_document(
-            document=InputFile(image_bytes),
-            caption=caption,
-            reply_markup=buttons
-        )
-
-    else:
-
-        await update.message.reply_document(
-            document=InputFile(image_bytes),
-            caption=caption,
-            reply_markup=buttons,
-            **kwargs
-        )
+    await target_message.reply_document(
+        document=InputFile(image_bytes),
+        caption=caption,
+        reply_markup=buttons,
+        **kwargs
+    )
 
 
 async def handle_artist_buttons(
@@ -695,23 +704,34 @@ async def handle_message(
 
     try:
 
+        # =========================
+        # MUSIC LINKS
+        # =========================
+
         if (
             "spotify.com" in text
             or "deezer.com" in text
             or "music.apple.com" in text
         ):
 
-            parsed = parse_music_url(
-                text
-            )
+            parsed = parse_music_url(text)
 
-            query = clean_query(
+            search_query = clean_query(
                 f"{parsed['album_name']} {parsed['artists']}"
             )
 
+            print("LINK QUERY:", search_query)
+
             album = search_album(
-                query
+                search_query
             )
+
+            # fallback
+            if not album:
+
+                album = search_album(
+                    parsed["album_name"]
+                )
 
             if not album:
 
@@ -728,6 +748,26 @@ async def handle_message(
             )
 
             return
+
+        # =========================
+        # ALBUM SEARCH FIRST
+        # =========================
+
+        album = search_album(text)
+
+        if album:
+
+            await send_album(
+                update,
+                context,
+                album["id"]
+            )
+
+            return
+
+        # =========================
+        # ARTIST SEARCH SECOND
+        # =========================
 
         artist = search_artist(text)
 
@@ -757,28 +797,17 @@ async def handle_message(
 
             return
 
-        album = search_album(text)
-
-        if not album:
-
-            await update.message.reply_text(
-                "Album not found"
-            )
-
-            return
-
-        await send_album(
-            update,
-            context,
-            album["id"]
+        await update.message.reply_text(
+            "Album not found"
         )
 
     except Exception as e:
 
+        print(e)
+
         await update.message.reply_text(
             f"Error:\n{str(e)}"
         )
-
 
 def main():
 
