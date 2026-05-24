@@ -342,31 +342,37 @@ def get_album(album_id):
     tracks = []
     total_duration = 0
 
-    current_tracks = (
-        data.get("tracks", {})
-        .get("data", [])
-    )
-
-    next_url = (
-        data.get("tracks", {})
-        .get("next")
+    tracks_data = data.get(
+        "tracks",
+        {}
     )
 
     while True:
 
+        current_tracks = tracks_data.get(
+            "data",
+            []
+        )
+
         for track in current_tracks:
 
-            tracks.append(
+            title = track.get(
+                "title",
+                "Unknown Track"
+            )
+
+            tracks.append(title)
+
+            total_duration += int(
                 track.get(
-                    "title",
-                    "Unknown Track"
+                    "duration",
+                    0
                 )
             )
 
-            total_duration += track.get(
-                "duration",
-                0
-            )
+        next_url = tracks_data.get(
+            "next"
+        )
 
         if not next_url:
             break
@@ -376,16 +382,7 @@ def get_album(album_id):
             timeout=15
         )
 
-        next_data = next_response.json()
-
-        current_tracks = next_data.get(
-            "data",
-            []
-        )
-
-        next_url = next_data.get(
-            "next"
-        )
+        tracks_data = next_response.json()
 
     contributors = data.get(
         "contributors",
@@ -400,7 +397,10 @@ def get_album(album_id):
             "name"
         )
 
-        if name and name not in artists:
+        if (
+            name
+            and name not in artists
+        ):
             artists.append(name)
 
     artist_data = data.get(
@@ -704,7 +704,7 @@ async def handle_message(
 
     try:
 
-        # =========================
+               # =========================
         # MUSIC LINKS
         # =========================
 
@@ -714,24 +714,46 @@ async def handle_message(
             or "music.apple.com" in text
         ):
 
-            parsed = parse_music_url(text)
-
-            search_query = clean_query(
-                f"{parsed['album_name']} {parsed['artists']}"
+            parsed = parse_music_url(
+                text
             )
 
-            print("LINK QUERY:", search_query)
-
-            album = search_album(
-                search_query
-            )
-
-            # fallback
-            if not album:
-
-                album = search_album(
-                    parsed["album_name"]
+            album_name = clean_query(
+                parsed.get(
+                    "album_name",
+                    ""
                 )
+            )
+
+            artists = clean_query(
+                parsed.get(
+                    "artists",
+                    ""
+                )
+            )
+
+            search_queries = [
+
+                f"{album_name} {artists}",
+
+                album_name,
+
+                f"{artists} {album_name}",
+            ]
+
+            album = None
+
+            for q in search_queries:
+
+                print(
+                    "TRYING:",
+                    q
+                )
+
+                album = search_album(q)
+
+                if album:
+                    break
 
             if not album:
 
@@ -748,7 +770,8 @@ async def handle_message(
             )
 
             return
-
+        
+        
                # =========================
         # ARTIST DETECTION
         # =========================
