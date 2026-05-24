@@ -9,7 +9,6 @@ from bs4 import BeautifulSoup
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.ext import ApplicationBuilder, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
-# Импортируем парсер из music_parser.py
 from music_parser import parse_music_url
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -28,7 +27,6 @@ def run_web():
 def clean_query(text: str) -> str:
     if not text:
         return ""
-    # Удаляем невидимые символы
     text = re.sub(r'[\u200e\u200f\u202a-\u202e]', '', text)
     text = re.sub(r"[\(\[].*?[\)\]]", "", text)
     text = re.sub(r"\b(Album|Single|EP|Deluxe|Edition|Remastered)\b", "", text, flags=re.I)
@@ -80,7 +78,6 @@ def find_deezer_album_by_artist_and_title(album_name: str, artist_name: str) -> 
     return None
 
 def extract_deezer_id(url: str) -> int | None:
-    # Только если это настоящая Deezer ссылка
     if "deezer.com" not in url:
         return None
     m = re.search(r"/album[/]?(\d+)", url)
@@ -102,10 +99,19 @@ def extract_deezer_id(url: str) -> int | None:
 # ------------------------------------
 def build_album_caption(album_info: dict) -> str:
     tracklist = "\n".join(album_info["tracks"])
+    # Форматирование даты
+    raw_date = album_info.get("release_date", "")
+    formatted_date = raw_date
+    try:
+        from datetime import datetime
+        dt = datetime.strptime(raw_date, "%Y-%m-%d")
+        formatted_date = dt.strftime("%B %d, %Y")
+    except:
+        pass
     caption = (
         f"🎵 {album_info['title']}\n\n"
         f"👥 {album_info['artist']}\n\n"
-        f"📅 {album_info['release_date']}\n"
+        f"📅 {formatted_date}\n"
         f"💿 {album_info['track_count']} tracks\n"
         f"⏳ {album_info['duration']}\n\n"
         f"---Tracklist---\n\n"
@@ -117,7 +123,7 @@ def build_album_caption(album_info: dict) -> str:
         caption = (
             f"🎵 {album_info['title']}\n\n"
             f"👥 {album_info['artist']}\n\n"
-            f"📅 {album_info['release_date']}\n"
+            f"📅 {formatted_date}\n"
             f"💿 {album_info['track_count']} tracks\n"
             f"⏳ {album_info['duration']}\n\n"
             f"---Tracklist (first {max_len} chars)---\n\n"
@@ -200,7 +206,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print(f"📩 Received: {text}")
 
     try:
-        # ----- 1. Deezer ссылка (только если домен deezer.com) -----
+        # 1. Deezer ссылка
         if "deezer.com" in text and "/album/" in text:
             deezer_id = extract_deezer_id(text)
             if deezer_id:
@@ -208,37 +214,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await send_album(update, context, deezer_id)
                 return
 
-        # ----- 2. Spotify ссылка -----
+        # 2. Spotify ссылка
         if "spotify.com/album/" in text:
             parsed = parse_music_url(text)
             if parsed:
-                album_name = clean_query(parsed.get("album_name", ""))
-                artists = clean_query(parsed.get("artists", ""))
+                album_name = clean_query(parsed["album_name"])
+                artists = clean_query(parsed["artists"])
                 print(f"🎵 Spotify: album='{album_name}', artist='{artists}'")
                 album = find_deezer_album_by_artist_and_title(album_name, artists)
                 if album:
                     await send_album(update, context, album["id"])
                     return
 
-        # ----- 3. Apple Music ссылка -----
+        # 3. Apple Music ссылка
         if "music.apple.com" in text:
             parsed = parse_music_url(text)
             if parsed:
-                album_name = clean_query(parsed.get("album_name", ""))
-                artists = clean_query(parsed.get("artists", ""))
+                album_name = clean_query(parsed["album_name"])
+                artists = clean_query(parsed["artists"])
                 print(f"🍎 Apple Music: album='{album_name}', artist='{artists}'")
                 album = find_deezer_album_by_artist_and_title(album_name, artists)
                 if album:
                     await send_album(update, context, album["id"])
                     return
+                else:
+                    print("❌ Album not found in Deezer for Apple Music link")
 
-        # ----- 4. Текстовый поиск: сначала альбом -----
+        # 4. Текстовый поиск: сначала альбом
         album = deezer_search_album(text)
         if album:
             await send_album(update, context, album["id"])
             return
 
-        # ----- 5. Если альбом не найден, ищем артиста -----
+        # 5. Если альбом не найден, ищем артиста
         from deezer import search_artist_albums
         artist_albums = search_artist_albums(text)
         if artist_albums:

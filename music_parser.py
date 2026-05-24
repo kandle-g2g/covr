@@ -28,7 +28,7 @@ def parse_music_url(url: str):
             "artists": clean_query(artist),
             "cover": data.get("thumbnail_url")
         }
-    # Deezer (на случай, если понадобится)
+    # Deezer
     elif "deezer.com/album/" in url:
         match = re.search(r"/album/(\d+)", url)
         if not match:
@@ -62,8 +62,10 @@ def parse_music_url(url: str):
         else:
             album = title
             artist = ""
-        # Убираем "on Apple Music" из имени артиста
+        # Удаляем " on Apple Music" (с пробелом)
         artist = re.sub(r"\s+on Apple Music$", "", artist, flags=re.I)
+        # Также удаляем возможный суффикс "on Apple Music" без пробела
+        artist = re.sub(r"on Apple Music$", "", artist, flags=re.I).strip()
         return {
             "album_name": clean_query(album),
             "artists": clean_query(artist),
