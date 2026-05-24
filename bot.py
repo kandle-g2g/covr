@@ -16,7 +16,11 @@ from telegram.ext import (
     filters
 )
 
-from deezer import get_album_data
+from deezer import (
+    get_spotify_album_info,
+    search_deezer_album
+)
+
 from spotify_parser import extract_spotify_album_id
 
 
@@ -74,11 +78,23 @@ async def handle_message(
 
     try:
 
-        album_id = extract_spotify_album_id(
+        spotify_info = get_spotify_album_info(
             spotify_url
         )
 
-        album = get_album_data(album_id)
+        if not spotify_info:
+
+            await update.message.reply_text(
+                "Spotify album not found."
+            )
+
+            return
+
+        album_name = spotify_info["title"]
+
+        album = search_deezer_album(
+            album_name
+        )
 
         if not album:
 
