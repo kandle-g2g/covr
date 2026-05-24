@@ -1,8 +1,10 @@
 import os
-import re
 import requests
 
 from urllib.parse import quote
+from threading import Thread
+from flask import Flask
+
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -34,6 +36,36 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 TARGET_THREAD_ID = None
 
+# ---------------- FLASK ----------------
+
+app_flask = Flask(__name__)
+
+
+@app_flask.route("/")
+def home():
+    return "Bot is running"
+
+
+def run_web():
+    port = int(
+        os.environ.get(
+            "PORT",
+            10000
+        )
+    )
+
+    app_flask.run(
+        host="0.0.0.0",
+        port=port
+    )
+
+
+Thread(
+    target=run_web
+).start()
+
+# --------------------------------------
+
 
 def format_release_date(date_string):
 
@@ -59,29 +91,50 @@ def format_release_date(date_string):
 
     year, month, day = parts
 
-    month_name = months.get(month, month)
+    month_name = months.get(
+        month,
+        month
+    )
 
-    return f"{month_name} {int(day)}, {year}"
+    return (
+        f"{month_name} "
+        f"{int(day)}, "
+        f"{year}"
+    )
 
 
 def format_duration(seconds):
 
     hours = seconds // 3600
-    minutes = (seconds % 3600) // 60
+    minutes = (
+        seconds % 3600
+    ) // 60
+
     secs = seconds % 60
 
     if hours > 0:
-        return f"{hours}:{minutes:02}:{secs:02}"
+        return (
+            f"{hours}:"
+            f"{minutes:02}:"
+            f"{secs:02}"
+        )
 
-    return f"{minutes:02}:{secs:02}"
+    return (
+        f"{minutes:02}:"
+        f"{secs:02}"
+    )
 
 
 async def send_album(
-    message,
+    context,
+    chat_id,
     album
 ):
 
-    title = album.get("title", "Unknown")
+    title = album.get(
+        "title",
+        "Unknown"
+    )
 
     artists_list = []
 
@@ -114,12 +167,16 @@ async def send_album(
                 main_artist
             )
 
-    artists = ", ".join(artists_list)
+    artists = ", ".join(
+        artists_list
+    )
 
-    release_date = format_release_date(
-        album.get(
-            "release_date",
-            "Unknown"
+    release_date = (
+        format_release_date(
+            album.get(
+                "release_date",
+                "Unknown"
+            )
         )
     )
 
@@ -135,8 +192,10 @@ async def send_album(
         for track in tracks
     )
 
-    duration_text = format_duration(
-        total_duration
+    duration_text = (
+        format_duration(
+            total_duration
+        )
     )
 
     cover_url = (
@@ -158,7 +217,9 @@ async def send_album(
             track_name
         )
 
-    tracklist = "\n".join(track_lines)
+    tracklist = "\n".join(
+        track_lines
+    )
 
     caption = (
         f"🎵 {title}\n\n"
@@ -184,7 +245,9 @@ async def send_album(
         f"?term={search_query}"
     )
 
-    deezer_url = album.get("link")
+    deezer_url = album.get(
+        "link"
+    )
 
     youtube_music_url = (
         "https://music.youtube.com/search"
@@ -245,7 +308,9 @@ async def send_album(
         [
             InlineKeyboardButton(
                 f"View More From {artist_name}",
-                callback_data=f"artist:{artist_name}"
+                callback_data=(
+                    f"artist:{artist_name}"
+                )
             )
         ]
     ])
@@ -257,14 +322,19 @@ async def send_album(
             timeout=15
         )
 
-        image_data = image_response.content
+        image_data = (
+            image_response.content
+        )
 
-        filename = f"{title}.jpg"
+        filename = (
+            f"{title}.jpg"
+        )
 
         with open(
             filename,
             "wb"
         ) as f:
+
             f.write(image_data)
 
         with open(
@@ -272,7 +342,8 @@ async def send_album(
             "rb"
         ) as photo:
 
-            await message.reply_document(
+            await context.bot.send_document(
+                chat_id=chat_id,
                 document=InputFile(
                     photo,
                     filename=filename
@@ -295,11 +366,15 @@ async def handle_callback(
 
     data = query.data
 
-    if data.startswith("artist:"):
+    if data.startswith(
+        "artist:"
+    ):
 
-        artist_name = data.replace(
-            "artist:",
-            ""
+        artist_name = (
+            data.replace(
+                "artist:",
+                ""
+            )
         )
 
         artist = search_artist(
@@ -309,47 +384,68 @@ async def handle_callback(
         if not artist:
             return
 
-        albums = get_artist_albums(
-            artist["id"]
+        albums = (
+            get_artist_albums(
+                artist["id"]
+            )
         )
 
         buttons = []
 
         for album in albums[:20]:
 
-            album_title = album["title"]
+            album_title = (
+                album["title"]
+            )
 
-            album_id = album["id"]
+            album_id = (
+                album["id"]
+            )
 
             buttons.append([
                 InlineKeyboardButton(
                     album_title,
-                    callback_data=f"album:{album_id}"
+                    callback_data=(
+                        f"album:{album_id}"
+                    )
                 )
             ])
 
-        keyboard = InlineKeyboardMarkup(
-            buttons
+        keyboard = (
+            InlineKeyboardMarkup(
+                buttons
+            )
         )
 
-        await query.message.reply_text(
-            f"Albums by {artist_name}:",
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=(
+                f"Albums by "
+                f"{artist_name}:"
+            ),
             reply_markup=keyboard
         )
 
-    elif data.startswith("album:"):
+    elif data.startswith(
+        "album:"
+    ):
 
-        album_id = data.replace(
-            "album:",
-            ""
+        album_id = (
+            data.replace(
+                "album:",
+                ""
+            )
         )
 
-        album = get_album_by_id(
-            album_id
+        album = (
+            get_album_by_id(
+                album_id
+            )
         )
 
         await send_album(
-            query.message,
+            context,
+            query.message.chat_id,
             album
         )
 
@@ -379,43 +475,72 @@ async def handle_message(
 
     try:
 
-        if "open.spotify.com" in text:
+        if (
+            "open.spotify.com"
+            in text
+        ):
 
-            title = extract_title_from_page(
-                text
+            title = (
+                extract_title_from_page(
+                    text
+                )
             )
 
             if title:
-                album = search_album(title)
+                album = (
+                    search_album(
+                        title
+                    )
+                )
 
-        elif "music.apple.com" in text:
+        elif (
+            "music.apple.com"
+            in text
+        ):
 
-            title = extract_title_from_page(
-                text
+            title = (
+                extract_title_from_page(
+                    text
+                )
             )
 
             if title:
-                album = search_album(title)
+                album = (
+                    search_album(
+                        title
+                    )
+                )
 
-        elif "deezer.com" in text:
+        elif (
+            "deezer.com"
+            in text
+        ):
 
-            album_id = extract_deezer_album_id(
-                text
+            album_id = (
+                extract_deezer_album_id(
+                    text
+                )
             )
 
             if album_id:
-                album = get_album_by_id(
-                    album_id
+                album = (
+                    get_album_by_id(
+                        album_id
+                    )
                 )
 
         else:
 
-            artist = search_artist(text)
+            artist = search_artist(
+                text
+            )
 
             if artist:
 
-                albums = get_artist_albums(
-                    artist["id"]
+                albums = (
+                    get_artist_albums(
+                        artist["id"]
+                    )
                 )
 
                 buttons = []
@@ -424,36 +549,52 @@ async def handle_message(
 
                     buttons.append([
                         InlineKeyboardButton(
-                            album_item["title"],
+                            album_item[
+                                "title"
+                            ],
                             callback_data=(
                                 f"album:{album_item['id']}"
                             )
                         )
                     ])
 
-                keyboard = InlineKeyboardMarkup(
-                    buttons
+                keyboard = (
+                    InlineKeyboardMarkup(
+                        buttons
+                    )
                 )
 
-                await update.message.reply_text(
-                    f"Albums by {artist['name']}:",
+                await context.bot.send_message(
+                    chat_id=(
+                        update.message.chat_id
+                    ),
+                    text=(
+                        f"Albums by "
+                        f"{artist['name']}:"
+                    ),
                     reply_markup=keyboard
                 )
 
                 return
 
-            album = search_album(text)
+            album = search_album(
+                text
+            )
 
         if not album:
 
-            await update.message.reply_text(
-                "Album not found."
+            await context.bot.send_message(
+                chat_id=(
+                    update.message.chat_id
+                ),
+                text="Album not found."
             )
 
             return
 
         await send_album(
-            update.message,
+            context,
+            update.message.chat_id,
             album
         )
 
@@ -461,8 +602,11 @@ async def handle_message(
 
         print(e)
 
-        await update.message.reply_text(
-            f"Error:\n{e}"
+        await context.bot.send_message(
+            chat_id=(
+                update.message.chat_id
+            ),
+            text=f"Error:\n{e}"
         )
 
 

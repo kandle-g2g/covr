@@ -29,13 +29,11 @@ def extract_title_from_page(url):
 
     text = title.text.strip()
 
-    # Spotify
     text = text.replace(
         " - Album by ",
         "|"
     )
 
-    # Apple Music
     text = text.replace(
         " - Apple Music",
         ""
