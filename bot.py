@@ -1,7 +1,6 @@
 import os
 import re
 import json
-import html
 import asyncio
 import requests
 
@@ -49,9 +48,11 @@ def run_web():
 
 
 def clean_query(text: str):
+
     text = re.sub(r"\(.*?\)", "", text)
     text = re.sub(r"\[.*?\]", "", text)
     text = re.sub(r"\s+", " ", text)
+
     return text.strip()
 
 
@@ -88,36 +89,46 @@ def extract_spotify_metadata(url: str):
     for script in scripts:
 
         try:
-            data = json.loads(script.string)
 
-            if data.get("@type") == "MusicAlbum":
+            if not script.string:
+                continue
 
-                album_name = data.get("name")
+            data = json.loads(
+                script.string
+            )
 
-                artists = []
+            if data.get("@type") != "MusicAlbum":
+                continue
 
-                by_artist = data.get("byArtist")
+            album_name = data.get("name")
 
-                if isinstance(by_artist, list):
+            artists = []
 
-                    for artist in by_artist:
+            by_artist = data.get(
+                "byArtist"
+            )
+
+            if isinstance(by_artist, list):
+
+                for artist in by_artist:
+
+                    if artist.get("name"):
                         artists.append(
-                            artist.get("name")
+                            artist["name"]
                         )
 
-                elif isinstance(by_artist, dict):
+            elif isinstance(by_artist, dict):
 
+                if by_artist.get("name"):
                     artists.append(
-                        by_artist.get("name")
+                        by_artist["name"]
                     )
 
-                cover = data.get("image")
-
-                return {
-                    "album_name": album_name,
-                    "artists": ", ".join(artists),
-                    "cover": cover
-                }
+            return {
+                "album_name": album_name,
+                "artists": ", ".join(artists),
+                "cover": data.get("image")
+            }
 
         except:
             pass
@@ -144,34 +155,38 @@ def extract_deezer_metadata(url: str):
 
     parts = title.split("by")
 
-    if len(parts) >= 2:
-
-        album_name = parts[0].replace(
-            "album",
-            ""
-        ).strip()
-
-        artists = parts[1].split("|")[0].strip()
-
-        cover = None
-
-        meta = soup.find(
-            "meta",
-            property="og:image"
+    if len(parts) < 2:
+        raise Exception(
+            "Deezer metadata not found"
         )
 
-        if meta:
-            cover = meta.get("content")
-
-        return {
-            "album_name": album_name,
-            "artists": artists,
-            "cover": cover
-        }
-
-    raise Exception(
-        "Deezer metadata not found"
+    album_name = (
+        parts[0]
+        .replace("album", "")
+        .strip()
     )
+
+    artists = (
+        parts[1]
+        .split("|")[0]
+        .strip()
+    )
+
+    cover = None
+
+    meta = soup.find(
+        "meta",
+        property="og:image"
+    )
+
+    if meta:
+        cover = meta.get("content")
+
+    return {
+        "album_name": album_name,
+        "artists": artists,
+        "cover": cover
+    }
 
 
 def extract_apple_metadata(url: str):
@@ -191,34 +206,38 @@ def extract_apple_metadata(url: str):
 
     parts = title.split("by")
 
-    if len(parts) >= 2:
-
-        album_name = parts[0].replace(
-            "on Apple Music",
-            ""
-        ).strip()
-
-        artists = parts[1].split("on")[0].strip()
-
-        cover = None
-
-        meta = soup.find(
-            "meta",
-            property="og:image"
+    if len(parts) < 2:
+        raise Exception(
+            "Apple metadata not found"
         )
 
-        if meta:
-            cover = meta.get("content")
-
-        return {
-            "album_name": album_name,
-            "artists": artists,
-            "cover": cover
-        }
-
-    raise Exception(
-        "Apple Music metadata not found"
+    album_name = (
+        parts[0]
+        .replace("on Apple Music", "")
+        .strip()
     )
+
+    artists = (
+        parts[1]
+        .split("on")[0]
+        .strip()
+    )
+
+    cover = None
+
+    meta = soup.find(
+        "meta",
+        property="og:image"
+    )
+
+    if meta:
+        cover = meta.get("content")
+
+    return {
+        "album_name": album_name,
+        "artists": artists,
+        "cover": cover
+    }
 
 
 def parse_music_url(url: str):
@@ -232,7 +251,9 @@ def parse_music_url(url: str):
     if "music.apple.com" in url:
         return extract_apple_metadata(url)
 
-    raise Exception("Unsupported link")
+    raise Exception(
+        "Unsupported link"
+    )
 
 
 def search_album(query: str):
@@ -247,28 +268,32 @@ def search_album(query: str):
 
     data = response.json()
 
-    if not data.get("data"):
+    albums = data.get("data", [])
+
+    if not albums:
         return None
 
-    return data["data"][0]
+    return albums[0]
 
 
-def search_artist(artist_name: str):
+def search_artist(query: str):
 
     response = requests.get(
         "https://api.deezer.com/search/artist",
         params={
-            "q": artist_name
+            "q": query
         },
         timeout=15
     )
 
     data = response.json()
 
-    if not data.get("data"):
+    artists = data.get("data", [])
+
+    if not artists:
         return None
 
-    return data["data"][0]
+    return artists[0]
 
 
 def get_artist_albums(artist_id):
@@ -281,17 +306,21 @@ def get_artist_albums(artist_id):
     data = response.json()
 
     albums = []
-
     seen = set()
 
     for album in data.get("data", []):
 
-        title = album["title"]
+        title = album.get("title")
+
+        if not title:
+            continue
 
         if title.lower() in seen:
             continue
 
-        seen.add(title.lower())
+        seen.add(
+            title.lower()
+        )
 
         albums.append({
             "id": album["id"],
@@ -311,18 +340,33 @@ def get_album(album_id):
     data = response.json()
 
     tracks = []
-
     total_duration = 0
 
-    next_url = data["tracks"].get("next")
-    current_tracks = data["tracks"]["data"]
+    current_tracks = (
+        data.get("tracks", {})
+        .get("data", [])
+    )
+
+    next_url = (
+        data.get("tracks", {})
+        .get("next")
+    )
 
     while True:
 
         for track in current_tracks:
 
-            tracks.append(track["title"])
-            total_duration += track["duration"]
+            tracks.append(
+                track.get(
+                    "title",
+                    "Unknown Track"
+                )
+            )
+
+            total_duration += track.get(
+                "duration",
+                0
+            )
 
         if not next_url:
             break
@@ -334,35 +378,70 @@ def get_album(album_id):
 
         next_data = next_response.json()
 
-        current_tracks = next_data["data"]
-        next_url = next_data.get("next")
+        current_tracks = next_data.get(
+            "data",
+            []
+        )
 
-    artists = []
+        next_url = next_data.get(
+            "next"
+        )
 
     contributors = data.get(
         "contributors",
         []
     )
 
-    for artist in contributors:
+    artists = []
 
-        name = artist.get("name")
+    for contributor in contributors:
+
+        name = contributor.get(
+            "name"
+        )
 
         if name and name not in artists:
             artists.append(name)
 
-    artist_data = data.get("artist", {})
+    artist_data = data.get(
+        "artist",
+        {}
+    )
 
     return {
-        "title": data["title"],
-        "artist": ", ".join(artists),
-        "release_date": data["release_date"],
+
+        "title": data.get(
+            "title",
+            "Unknown Album"
+        ),
+
+        "artist": ", ".join(artists)
+        if artists
+        else artist_data.get(
+            "name",
+            "Unknown Artist"
+        ),
+
+        "release_date": data.get(
+            "release_date",
+            "Unknown Date"
+        ),
+
         "tracks_count": len(tracks),
-        "duration": format_duration(total_duration),
-        "cover": data["cover_xl"],
+
+        "duration": format_duration(
+            total_duration
+        ),
+
+        "cover": data.get(
+            "cover_xl"
+        ),
+
         "tracks": tracks,
 
-        "deezer_url": data.get("link"),
+        "deezer_url": data.get(
+            "link"
+        ),
 
         "artist_url": artist_data.get(
             "link",
@@ -373,8 +452,6 @@ def get_album(album_id):
             "name",
             artists[0] if artists else "Unknown Artist"
         ),
-
-        "upc": data.get("upc")
     }
 
 
@@ -456,7 +533,9 @@ async def send_album(
     album_id
 ):
 
-    album_info = get_album(album_id)
+    album_info = get_album(
+        album_id
+    )
 
     caption = build_album_caption(
         album_info
@@ -481,7 +560,23 @@ async def send_album(
         album_info["title"]
     )
 
-    image_bytes.name = f"{safe_name}.jpg"
+    image_bytes.name = (
+        f"{safe_name}.jpg"
+    )
+
+    kwargs = {}
+
+    if (
+        TARGET_THREAD_ID
+        and hasattr(update, "message")
+        and update.message
+        and update.message.chat.type
+        in ["group", "supergroup"]
+    ):
+
+        kwargs["message_thread_id"] = int(
+            TARGET_THREAD_ID
+        )
 
     if hasattr(update, "callback_query"):
 
@@ -492,17 +587,6 @@ async def send_album(
         )
 
     else:
-
-        kwargs = {}
-
-        if (
-            TARGET_THREAD_ID
-            and update.message.chat.type
-            in ["supergroup", "group"]
-        ):
-            kwargs["message_thread_id"] = int(
-                TARGET_THREAD_ID
-            )
 
         await update.message.reply_document(
             document=InputFile(image_bytes),
@@ -593,7 +677,7 @@ async def handle_message(
     if (
         TARGET_THREAD_ID
         and update.message.chat.type
-        in ["supergroup", "group"]
+        in ["group", "supergroup"]
     ):
 
         thread_id = getattr(
@@ -611,19 +695,22 @@ async def handle_message(
 
     try:
 
-        if "spotify.com" in text \
-        or "deezer.com" in text \
-        or "music.apple.com" in text:
+        if (
+            "spotify.com" in text
+            or "deezer.com" in text
+            or "music.apple.com" in text
+        ):
 
-            parsed = parse_music_url(text)
+            parsed = parse_music_url(
+                text
+            )
 
-            search_query = (
-                f"{parsed['album_name']} "
-                f"{parsed['artists']}"
+            query = clean_query(
+                f"{parsed['album_name']} {parsed['artists']}"
             )
 
             album = search_album(
-                clean_query(search_query)
+                query
             )
 
             if not album:
@@ -699,7 +786,10 @@ def main():
         asyncio.new_event_loop()
     )
 
-    web_thread = Thread(target=run_web)
+    web_thread = Thread(
+        target=run_web
+    )
+
     web_thread.daemon = True
     web_thread.start()
 
