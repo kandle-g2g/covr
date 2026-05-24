@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import threading
 import requests
 from io import BytesIO
@@ -7,6 +8,7 @@ from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
+# Импортируйте ваши модули (проверьте пути)
 from music_parser import parse_music_url
 from deezer import get_album_tracks, search_artist_albums, search_artist
 
@@ -18,6 +20,7 @@ HEADERS = {"User-Agent": "Mozilla/5.0"}
 # ---------- Flask для healthcheck ----------
 flask_app = Flask(__name__)
 
+@flask_app.route("/health")
 @flask_app.route("/healthcheck")
 def healthcheck():
     return "OK", 200
@@ -97,7 +100,9 @@ def extract_deezer_id(url: str):
 
 # ---------- Построение сообщения ----------
 def build_album_caption(album_info: dict) -> str:
-    tracklist = "\n".join(album_info["tracks"])
+    # Нумерованный треклист (цифры копируются, но пользователь может их удалить вручную)
+    numbered_tracks = [f"{i+1}. {track}" for i, track in enumerate(album_info["tracks"])]
+    tracklist = "\n".join(numbered_tracks)
     raw_date = album_info.get("release_date", "")
     formatted_date = raw_date
     try:
@@ -197,7 +202,7 @@ async def send_album(update: Update, context: ContextTypes.DEFAULT_TYPE, album_i
 # ---------- Обработчики команд ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🎵 *Music Album Bot*\n\n"
+        "🎵 *Covr bot*\n\n"
         "Send me:\n"
         "• an album name (e.g., *Graduation*)\n"
         "• an artist name (e.g., *Kanye West*) – I'll show their albums\n"
@@ -301,8 +306,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"🔥 Error in handle_message: {e}")
         await update.message.reply_text(f"Internal error: {e}")
 
-# ---------- Запуск ----------
-def run_polling():
+# ---------- Запуск polling с автоматическим перезапуском ----------
+def run_bot_with_retry():
     # Удаляем вебхук на случай, если он был установлен
     try:
         requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook")
@@ -310,19 +315,25 @@ def run_polling():
     except Exception as e:
         print(f"Failed to delete webhook: {e}")
 
-    application = Application.builder().token(BOT_TOKEN).build()
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("artist", artist_command))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_handler(CallbackQueryHandler(handle_artist_buttons, pattern=r"^artist::"))
-    application.add_handler(CallbackQueryHandler(handle_album_buttons, pattern=r"^album::"))
+    while True:
+        try:
+            application = Application.builder().token(BOT_TOKEN).build()
+            application.add_handler(CommandHandler("start", start))
+            application.add_handler(CommandHandler("artist", artist_command))
+            application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+            application.add_handler(CallbackQueryHandler(handle_artist_buttons, pattern=r"^artist::"))
+            application.add_handler(CallbackQueryHandler(handle_album_buttons, pattern=r"^album::"))
 
-    print("✅ Бот запущен в режиме polling, слушаем сообщения...")
-    application.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
+            print("✅ Бот запущен в режиме polling, слушаем сообщения...")
+            application.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
+        except Exception as e:
+            print(f"❌ Polling crashed: {e}. Restarting in 10 seconds...")
+            time.sleep(10)
 
+# ---------- Главный вход ----------
 if __name__ == "__main__":
-    # Запускаем Flask-сервер в фоновом потоке (для healthcheck)
+    # Запускаем Flask-сервер в фоновом потоке (healthcheck)
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
-    # Запускаем polling в основном потоке
-    run_polling()
+    # Запускаем polling с автоперезапуском
+    run_bot_with_retry()
