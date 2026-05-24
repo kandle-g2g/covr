@@ -10,7 +10,7 @@ def clean_query(text):
     return text.strip()
 
 def parse_music_url(url: str):
-    # Spotify через oembed
+    # Spotify
     if "spotify.com/album/" in url:
         resp = requests.get("https://open.spotify.com/oembed", params={"url": url}, timeout=10)
         if resp.status_code != 200:
@@ -28,7 +28,7 @@ def parse_music_url(url: str):
             "artists": clean_query(artist),
             "cover": data.get("thumbnail_url")
         }
-    # Deezer (если понадобится)
+    # Deezer (на случай, если понадобится)
     elif "deezer.com/album/" in url:
         match = re.search(r"/album/(\d+)", url)
         if not match:
@@ -62,6 +62,8 @@ def parse_music_url(url: str):
         else:
             album = title
             artist = ""
+        # Убираем "on Apple Music" из имени артиста
+        artist = re.sub(r"\s+on Apple Music$", "", artist, flags=re.I)
         return {
             "album_name": clean_query(album),
             "artists": clean_query(artist),

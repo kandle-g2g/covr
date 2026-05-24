@@ -9,7 +9,7 @@ from bs4 import BeautifulSoup
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.ext import ApplicationBuilder, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
-# Импортируем парсер из music_parser.py (он работает для Spotify, Deezer, Apple Music)
+# Импортируем парсер из music_parser.py
 from music_parser import parse_music_url
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -26,10 +26,9 @@ def run_web():
     flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
 
 def clean_query(text: str) -> str:
-    """Очистка от скобок, лишних слов и невидимых символов."""
     if not text:
         return ""
-    # Удаляем невидимые символы (например, \u200E)
+    # Удаляем невидимые символы
     text = re.sub(r'[\u200e\u200f\u202a-\u202e]', '', text)
     text = re.sub(r"[\(\[].*?[\)\]]", "", text)
     text = re.sub(r"\b(Album|Single|EP|Deluxe|Edition|Remastered)\b", "", text, flags=re.I)
@@ -45,7 +44,7 @@ def format_duration(seconds: int) -> str:
     return f"{minutes}:{secs:02}"
 
 # ------------------------------------
-# Deezer API helpers
+# Deezer API
 # ------------------------------------
 def deezer_search_album(query: str) -> dict | None:
     try:
@@ -71,7 +70,6 @@ def find_deezer_album_by_artist_and_title(album_name: str, artist_name: str) -> 
         print(f"🔎 Searching Deezer: {q}")
         album = deezer_search_album(q)
         if album:
-            # Совпадение артиста (хотя бы частичное)
             deezer_artist = album.get("artist", {}).get("name", "").lower()
             if artist_clean.lower() in deezer_artist or deezer_artist in artist_clean.lower():
                 print(f"✅ Found: {album['title']} by {album['artist']['name']}")
@@ -82,6 +80,9 @@ def find_deezer_album_by_artist_and_title(album_name: str, artist_name: str) -> 
     return None
 
 def extract_deezer_id(url: str) -> int | None:
+    # Только если это настоящая Deezer ссылка
+    if "deezer.com" not in url:
+        return None
     m = re.search(r"/album[/]?(\d+)", url)
     if m:
         return int(m.group(1))
@@ -199,37 +200,45 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print(f"📩 Received: {text}")
 
     try:
-        # 1. Deezer ссылка (прямой ID)
-        deezer_id = extract_deezer_id(text)
-        if deezer_id:
-            print(f"✅ Deezer direct ID: {deezer_id}")
-            await send_album(update, context, deezer_id)
-            return
+        # ----- 1. Deezer ссылка (только если домен deezer.com) -----
+        if "deezer.com" in text and "/album/" in text:
+            deezer_id = extract_deezer_id(text)
+            if deezer_id:
+                print(f"✅ Deezer direct ID: {deezer_id}")
+                await send_album(update, context, deezer_id)
+                return
 
-        # 2. Любая музыкальная ссылка (Spotify, Apple Music, Deezer (как запасной вариант)) – используем parse_music_url
-        if any(domain in text for domain in ["spotify.com/album", "music.apple.com", "deezer.com/album"]):
-            try:
-                parsed = parse_music_url(text)   # из music_parser.py
-                if parsed:
-                    album_name = clean_query(parsed.get("album_name", ""))
-                    artists = clean_query(parsed.get("artists", ""))
-                    print(f"🔗 Parsed: album='{album_name}', artist='{artists}'")
-                    # Пытаемся найти в Deezer
-                    album = find_deezer_album_by_artist_and_title(album_name, artists)
-                    if album:
-                        await send_album(update, context, album["id"])
-                        return
-            except Exception as e:
-                print(f"Parse error: {e}")
+        # ----- 2. Spotify ссылка -----
+        if "spotify.com/album/" in text:
+            parsed = parse_music_url(text)
+            if parsed:
+                album_name = clean_query(parsed.get("album_name", ""))
+                artists = clean_query(parsed.get("artists", ""))
+                print(f"🎵 Spotify: album='{album_name}', artist='{artists}'")
+                album = find_deezer_album_by_artist_and_title(album_name, artists)
+                if album:
+                    await send_album(update, context, album["id"])
+                    return
 
-        # 3. Текстовый поиск: сначала как альбом, потом как артист
-        # Сначала прямой поиск альбома
+        # ----- 3. Apple Music ссылка -----
+        if "music.apple.com" in text:
+            parsed = parse_music_url(text)
+            if parsed:
+                album_name = clean_query(parsed.get("album_name", ""))
+                artists = clean_query(parsed.get("artists", ""))
+                print(f"🍎 Apple Music: album='{album_name}', artist='{artists}'")
+                album = find_deezer_album_by_artist_and_title(album_name, artists)
+                if album:
+                    await send_album(update, context, album["id"])
+                    return
+
+        # ----- 4. Текстовый поиск: сначала альбом -----
         album = deezer_search_album(text)
         if album:
             await send_album(update, context, album["id"])
             return
 
-        # Если альбом не найден – ищем артиста и показываем его альбомы
+        # ----- 5. Если альбом не найден, ищем артиста -----
         from deezer import search_artist_albums
         artist_albums = search_artist_albums(text)
         if artist_albums:
@@ -242,20 +251,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"🔥 Error: {e}")
         await update.message.reply_text(f"Error: {str(e)}")
 
-# ------------------------------------
-# Запуск
-# ------------------------------------
 def main():
     asyncio.set_event_loop(asyncio.new_event_loop())
-    # Запускаем веб-сервер в фоне (для healthcheck)
     web_thread = Thread(target=run_web, daemon=True)
     web_thread.start()
-
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(handle_artist_buttons, pattern=r"^artist::"))
     app.add_handler(CallbackQueryHandler(handle_album_buttons, pattern=r"^album::"))
-    print("✅ Бот запущен")
+    print("✅ Bot started")
     app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
