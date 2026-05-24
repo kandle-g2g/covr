@@ -749,8 +749,50 @@ async def handle_message(
 
             return
 
+               # =========================
+        # ARTIST DETECTION
         # =========================
-        # ALBUM SEARCH FIRST
+
+        artist = search_artist(text)
+
+        if artist:
+
+            artist_name = artist["name"].lower().strip()
+            user_query = text.lower().strip()
+
+            # exact artist search
+            if (
+                artist_name == user_query
+                or user_query in artist_name
+                or artist_name in user_query
+            ):
+
+                albums = get_artist_albums(
+                    artist["id"]
+                )
+
+                keyboard = []
+
+                for album in albums:
+
+                    keyboard.append([
+                        InlineKeyboardButton(
+                            album["title"],
+                            callback_data=f"album::{album['id']}"
+                        )
+                    ])
+
+                await update.message.reply_text(
+                    f"{artist['name']} albums:",
+                    reply_markup=InlineKeyboardMarkup(
+                        keyboard
+                    )
+                )
+
+                return
+
+        # =========================
+        # ALBUM SEARCH
         # =========================
 
         album = search_album(text)
@@ -761,38 +803,6 @@ async def handle_message(
                 update,
                 context,
                 album["id"]
-            )
-
-            return
-
-        # =========================
-        # ARTIST SEARCH SECOND
-        # =========================
-
-        artist = search_artist(text)
-
-        if artist:
-
-            albums = get_artist_albums(
-                artist["id"]
-            )
-
-            keyboard = []
-
-            for album in albums:
-
-                keyboard.append([
-                    InlineKeyboardButton(
-                        album["title"],
-                        callback_data=f"album::{album['id']}"
-                    )
-                ])
-
-            await update.message.reply_text(
-                f"{artist['name']} albums:",
-                reply_markup=InlineKeyboardMarkup(
-                    keyboard
-                )
             )
 
             return
