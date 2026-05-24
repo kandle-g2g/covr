@@ -7,7 +7,6 @@ from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.ext import Application, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
-# Подключаем ваши модули для парсинга ссылок и работы с Deezer
 from music_parser import parse_music_url
 from deezer import get_album_tracks, search_artist_albums, search_artist
 
@@ -18,7 +17,7 @@ HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 flask_app = Flask(__name__)
 
-# ---------- Вспомогательные функции ----------
+# ---------- Вспомогательные функции (без изменений) ----------
 def clean_query(text: str) -> str:
     if not text:
         return ""
@@ -36,7 +35,6 @@ def format_duration(seconds: int) -> str:
         return f"{hours}:{minutes:02}:{secs:02}"
     return f"{minutes}:{secs:02}"
 
-# ---------- Deezer API helpers ----------
 def deezer_search_album(query: str) -> dict | None:
     try:
         resp = requests.get("https://api.deezer.com/search/album", params={"q": query}, timeout=15)
@@ -87,7 +85,6 @@ def extract_deezer_id(url: str) -> int | None:
             pass
     return None
 
-# ---------- Построение сообщения ----------
 def build_album_caption(album_info: dict) -> str:
     tracklist = "\n".join(album_info["tracks"])
     raw_date = album_info.get("release_date", "")
@@ -162,7 +159,6 @@ async def send_album(update: Update, context: ContextTypes.DEFAULT_TYPE, album_i
         **kwargs
     )
 
-# ---------- Обработчики ----------
 async def handle_artist_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -192,7 +188,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print(f"📩 Received: {text}")
 
     try:
-        # 1. Deezer ссылка
         if "deezer.com" in text and "/album/" in text:
             deezer_id = extract_deezer_id(text)
             if deezer_id:
@@ -200,7 +195,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await send_album(update, context, deezer_id)
                 return
 
-        # 2. Spotify ссылка
         if "spotify.com/album/" in text:
             parsed = parse_music_url(text)
             if parsed:
@@ -212,7 +206,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await send_album(update, context, album["id"])
                     return
 
-        # 3. Apple Music ссылка
         if "music.apple.com" in text:
             parsed = parse_music_url(text)
             if parsed:
@@ -224,7 +217,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await send_album(update, context, album["id"])
                     return
 
-        # 4. Текстовый запрос: сначала ищем артиста
         artist_obj = search_artist(text)
         if artist_obj:
             albums = search_artist_albums(text)
@@ -233,7 +225,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"🎤 {artist_obj['name']} albums:", reply_markup=InlineKeyboardMarkup(keyboard))
                 return
 
-        # 5. Если артист не найден, ищем альбом
         album = deezer_search_album(text)
         if album:
             await send_album(update, context, album["id"])
@@ -244,34 +235,45 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"🔥 Error: {e}")
         await update.message.reply_text(f"Error: {str(e)}")
 
-# ---------- Создание приложения и вебхук ----------
+# ---------- Инициализация приложения ----------
 application = Application.builder().token(BOT_TOKEN).build()
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 application.add_handler(CallbackQueryHandler(handle_artist_buttons, pattern=r"^artist::"))
 application.add_handler(CallbackQueryHandler(handle_album_buttons, pattern=r"^album::"))
 
-# Flask endpoints – теперь синхронные!
+# Инициализируем приложение (вызываем initialize и start)
+async def init_app():
+    await application.initialize()
+    await application.start()
+    print("✅ Application initialized and started")
+
+# Синхронный вебхук с вызовом инициализированного приложения
 @flask_app.route("/webhook", methods=["POST"])
 def webhook():
     json_data = request.get_json(force=True)
     update = Update.de_json(json_data, application.bot)
-    # Запускаем асинхронную обработку в новом event loop
-    asyncio.run(application.process_update(update))
+    # Запускаем обработку в существующем event loop или создаём новый
+    # Но application уже должен быть инициализирован глобально
+    # Используем asyncio.run_coroutine_threadsafe, если loop работает в фоне.
+    # Проще: создать новый event loop и запустить process_update с уже инициализированным app.
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(application.process_update(update))
+    finally:
+        loop.close()
     return "OK", 200
 
 @flask_app.route("/healthcheck")
 def healthcheck():
     return "OK", 200
 
-async def setup_webhook():
-    # Устанавливаем вебхук – можно вписать свой URL напрямую
-    # Замените "your-app-name" на реальное имя вашего сервиса на Render
-    webhook_url = "https://covr.onrender.com/webhook"
-    await application.bot.set_webhook(webhook_url)
-    print(f"✅ Webhook set to {webhook_url}")
-
 if __name__ == "__main__":
-    # Установка вебхука перед запуском Flask
-    asyncio.run(setup_webhook())
+    # Инициализируем приложение один раз перед запуском Flask
+    asyncio.run(init_app())
+    # Устанавливаем вебхук (замените на ваш реальный URL)
+    webhook_url = "https://covr.onrender.com/webhook"
+    asyncio.run(application.bot.set_webhook(webhook_url))
+    print(f"✅ Webhook set to {webhook_url}")
     port = int(os.environ.get("PORT", 10000))
     flask_app.run(host="0.0.0.0", port=port)
