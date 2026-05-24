@@ -1,3 +1,4 @@
+# bot.py
 import os
 import re
 import requests
@@ -295,7 +296,41 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             return
 
+    # =========================
+    # ПОИСК АЛЬБОМА
+    # =========================
+
     results = search_album(query)
+
+    # fallback №1 — только название альбома
+    if not results and extracted_url:
+
+        try:
+            metadata = extract_album_info_from_url(extracted_url)
+
+            fallback_query = clean(
+                metadata['album_name']
+            )
+
+            print("FALLBACK QUERY:", fallback_query)
+
+            results = search_album(fallback_query)
+
+        except Exception as e:
+            print("FALLBACK ERROR:", e)
+
+    # fallback №2 — убираем лишние символы
+    if not results:
+
+        simplified_query = re.sub(
+            r'[^a-zA-Zа-яА-Я0-9\s]',
+            '',
+            query
+        )
+
+        print("SIMPLIFIED QUERY:", simplified_query)
+
+        results = search_album(simplified_query)
 
     if not results:
         await update.message.reply_text(
