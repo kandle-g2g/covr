@@ -1,5 +1,6 @@
 import requests
 import re
+from bs4 import BeautifulSoup
 
 def clean_query(text):
     text = re.sub(r"\(.*?\)", "", text)
@@ -28,7 +29,7 @@ def parse_music_url(url: str):
             "artists": clean_query(artist),
             "cover": data.get("thumbnail_url")
         }
-    # Deezer
+    # Deezer (запасной вариант)
     elif "deezer.com/album/" in url:
         match = re.search(r"/album/(\d+)", url)
         if not match:
@@ -50,21 +51,27 @@ def parse_music_url(url: str):
     elif "music.apple.com" in url:
         headers = {"User-Agent": "Mozilla/5.0"}
         resp = requests.get(url, headers=headers, timeout=10)
-        from bs4 import BeautifulSoup
         soup = BeautifulSoup(resp.text, "html.parser")
-        title_tag = soup.find("title")
-        if not title_tag:
-            raise Exception("Apple Music title not found")
-        title = title_tag.string.strip()
-        title = title.replace(" - Apple Music", "")
-        if " by " in title:
-            album, artist = title.split(" by ", 1)
+        # Пытаемся взять og:title
+        og_title = soup.find("meta", property="og:title")
+        if og_title and og_title.get("content"):
+            title_text = og_title["content"]
         else:
-            album = title
+            title_tag = soup.find("title")
+            title_text = title_tag.string if title_tag else ""
+        if not title_text:
+            raise Exception("Apple Music title not found")
+        # Очищаем
+        title_text = re.sub(r"\s*[-|]\s*Apple Music$", "", title_text, flags=re.I)
+        if " by " in title_text:
+            album, artist = title_text.split(" by ", 1)
+        elif " – " in title_text:
+            album, artist = title_text.split(" – ", 1)
+        else:
+            album = title_text
             artist = ""
-        # Удаляем " on Apple Music" (с пробелом)
+        # Удаляем " on Apple Music" и подобное
         artist = re.sub(r"\s+on Apple Music$", "", artist, flags=re.I)
-        # Также удаляем возможный суффикс "on Apple Music" без пробела
         artist = re.sub(r"on Apple Music$", "", artist, flags=re.I).strip()
         return {
             "album_name": clean_query(album),

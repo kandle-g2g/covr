@@ -5,11 +5,11 @@ import requests
 from io import BytesIO
 from threading import Thread
 from flask import Flask
-from bs4 import BeautifulSoup
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.ext import ApplicationBuilder, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
 from music_parser import parse_music_url
+from deezer import get_album_tracks, search_artist_albums, search_artist
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TARGET_THREAD_ID = os.getenv("TARGET_THREAD_ID")
@@ -42,7 +42,7 @@ def format_duration(seconds: int) -> str:
     return f"{minutes}:{secs:02}"
 
 # ------------------------------------
-# Deezer API
+# Deezer helpers
 # ------------------------------------
 def deezer_search_album(query: str) -> dict | None:
     try:
@@ -99,7 +99,6 @@ def extract_deezer_id(url: str) -> int | None:
 # ------------------------------------
 def build_album_caption(album_info: dict) -> str:
     tracklist = "\n".join(album_info["tracks"])
-    # Форматирование даты
     raw_date = album_info.get("release_date", "")
     formatted_date = raw_date
     try:
@@ -147,7 +146,6 @@ def build_album_buttons(album_info: dict) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(keyboard)
 
 async def send_album(update, context, album_id: int):
-    from deezer import get_album_tracks
     album_info = get_album_tracks(album_id)
     caption = build_album_caption(album_info)
     buttons = build_album_buttons(album_info)
@@ -180,7 +178,6 @@ async def handle_artist_buttons(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     await query.answer()
     artist_name = query.data.replace("artist::", "")
-    from deezer import search_artist_albums
     albums = search_artist_albums(artist_name)
     if not albums:
         await query.message.reply_text("Artist not found")
@@ -238,22 +235,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await send_album(update, context, album["id"])
                     return
                 else:
-                    print("❌ Album not found in Deezer for Apple Music link")
+                    print("❌ Apple Music link: album not found in Deezer")
 
-        # 4. Текстовый поиск: сначала альбом
+        # 4. Текстовый запрос: сначала ищем артиста
+        artist_obj = search_artist(text)
+        if artist_obj:
+            # Найден артист → показываем его альбомы
+            albums = search_artist_albums(text)
+            if albums:
+                keyboard = [[InlineKeyboardButton(alb["title"], callback_data=f"album::{alb['id']}")] for alb in albums]
+                await update.message.reply_text(f"🎤 {artist_obj['name']} albums:", reply_markup=InlineKeyboardMarkup(keyboard))
+                return
+
+        # 5. Если артист не найден, ищем альбом
         album = deezer_search_album(text)
         if album:
             await send_album(update, context, album["id"])
             return
 
-        # 5. Если альбом не найден, ищем артиста
-        from deezer import search_artist_albums
-        artist_albums = search_artist_albums(text)
-        if artist_albums:
-            keyboard = [[InlineKeyboardButton(alb["title"], callback_data=f"album::{alb['id']}")] for alb in artist_albums]
-            await update.message.reply_text(f"🎤 {text} albums:", reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-
+        # 6. Ничего не найдено
         await update.message.reply_text("❌ Album not found")
     except Exception as e:
         print(f"🔥 Error: {e}")
