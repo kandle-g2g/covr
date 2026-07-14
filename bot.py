@@ -5,7 +5,7 @@ import threading
 import requests
 from io import BytesIO
 from flask import Flask
-from telegram import Update, InputFile
+from telegram import Update, InputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
 # Импортируйте ваши модули (пути должны быть правильные)
@@ -102,7 +102,7 @@ def extract_deezer_id(url: str):
             pass
     return None
 
-# ---------- Построение сообщения (только текст с гиперссылками) ----------
+# ---------- Построение сообщения (ссылки по две в строке) ----------
 def build_album_caption(album_info: dict, simple: bool = False) -> str:
     if simple:
         caption = f"🎵 {album_info['title']}\n\n👥 {album_info['artist']}"
@@ -138,23 +138,24 @@ def build_album_caption(album_info: dict, simple: bool = False) -> str:
                 f"{truncated}\n\n... (tracklist truncated)"
             )
 
-    # Гиперссылки на сервисы
+    # Гиперссылки на сервисы (по две в строке через |)
     title = album_info["title"]
     artist = album_info["artist"]
     query = requests.utils.quote(f"{artist} {title}")
     artist_query = requests.utils.quote(artist)
 
-    # Ссылка "Other releases" ведёт в чат с ботом, подставляя команду /artist
-    other_releases_link = f"https://t.me/{BOT_USERNAME}?text=/artist%20{artist_query}" if BOT_USERNAME else f"[Other releases of {artist}](https://www.deezer.com/search/artist?q={artist_query})"
+    # Ссылка "Other releases" – если BOT_USERNAME задан, ведёт в бота, иначе на Deezer
+    if BOT_USERNAME:
+        other_link = f"https://t.me/{BOT_USERNAME}?text=/artist%20{artist_query}"
+    else:
+        other_link = f"https://www.deezer.com/search/artist?q={artist_query}"
 
+    # Собираем ссылки попарно
     links = (
-        f"\n\n🎧 [Spotify](https://open.spotify.com/search/{query})\n"
-        f"🍎 [Apple Music](https://music.apple.com/us/search?term={query})\n"
-        f"💿 [Deezer](https://www.deezer.com/search/{query})\n"
-        f"🎶 [TIDAL](https://listen.tidal.com/search?q={query})\n"
-        f"📺 [YouTube](https://music.youtube.com/search?q={query})\n"
-        f"☁️ [SoundCloud](https://soundcloud.com/search?q={query})\n"
-        f"🎤 [Other releases of {artist}]({other_releases_link})"
+        f"\n\n🎧 [Spotify](https://open.spotify.com/search/{query}) | 🍎 [Apple Music](https://music.apple.com/us/search?term={query})\n"
+        f"💿 [Deezer](https://www.deezer.com/search/{query}) | 🎶 [TIDAL](https://listen.tidal.com/search?q={query})\n"
+        f"📺 [YouTube](https://music.youtube.com/search?q={query}) | ☁️ [SoundCloud](https://soundcloud.com/search?q={query})\n"
+        f"🎤 [Other releases of {artist}]({other_link})"
     )
     caption += links
     return caption
