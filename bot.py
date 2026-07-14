@@ -143,9 +143,9 @@ def build_album_caption(album_info: dict, simple: bool = False) -> str:
     query = requests.utils.quote(f"{artist} {title}")
     artist_query = requests.utils.quote(artist)
 
-    # Ссылка "Other releases" с deep linking через ?start=artist_...
+    # Ссылка "Other releases" с использованием tg:// для надёжного открытия
     if BOT_USERNAME:
-        other_link = f"https://t.me/{BOT_USERNAME}?start=artist_{artist_query}"
+        other_link = f"tg://resolve?domain={BOT_USERNAME}&start=artist_{artist_query}"
     else:
         other_link = f"https://www.deezer.com/search/artist?q={artist_query}"
 
@@ -248,7 +248,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/simple – show only cover (as photo), title and artist\n"
         "/full   – show full info (cover as file, tracklist, duration, etc.)\n\n"
         "All links (including 'Other releases') are embedded in the message and will stay when forwarded.\n"
-        "'Other releases' will open a chat with the bot and pre-fill the /artist command.\n\n"
+        "'Other releases' will open a chat with the bot and automatically show the artist's albums.\n\n"
         "_Bot is awake and listening!_",
         parse_mode="Markdown"
     )
