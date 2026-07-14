@@ -101,7 +101,7 @@ def extract_deezer_id(url: str):
             pass
     return None
 
-# ---------- Построение сообщения (теперь с параметром simple) ----------
+# ---------- Построение сообщения (с параметром simple) ----------
 def build_album_caption(album_info: dict, simple: bool = False) -> str:
     if simple:
         # Простой режим: только название и исполнитель
@@ -230,7 +230,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• an artist name (e.g., *Kanye West*) – I'll show their albums\n"
         "• a link from Spotify, Apple Music, or Deezer\n\n"
         "Or use /artist <name> to search for an artist explicitly.\n\n"
-        "Use /simple to toggle simple mode (only cover, title and artist).\n\n"
+        "Commands:\n"
+        "/simple – show only cover (as photo), title and artist\n"
+        "/full   – show full info (cover as file, tracklist, duration, etc.)\n\n"
         "_Bot is awake and listening!_",
         parse_mode="Markdown"
     )
@@ -249,13 +251,14 @@ async def artist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🎤 {artist_name} albums:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def simple_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Переключает простой режим для текущего чата."""
-    chat_id = update.effective_chat.id
-    current = context.chat_data.get('simple_mode', False)
-    new_mode = not current
-    context.chat_data['simple_mode'] = new_mode
-    status = "включен" if new_mode else "выключен"
-    await update.message.reply_text(f"Простой режим {status}. Теперь при запросе альбома будет отображаться только обложка, название и исполнитель.")
+    """Включает простой режим."""
+    context.chat_data['simple_mode'] = True
+    await update.message.reply_text("✅ Simple mode is enabled. Now, only the cover art (as a photo), title, and artist will be displayed.")
+
+async def full_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Включает полный режим."""
+    context.chat_data['simple_mode'] = False
+    await update.message.reply_text("✅ Full mode enabled. Full information will be displayed.")
 
 async def handle_artist_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -274,7 +277,6 @@ async def handle_album_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.answer()
     album_id = int(query.data.replace("album::", ""))
     print(f"💿 Album button: {album_id}")
-    # Передаём тот же update и context, чтобы внутри send_album использовался правильный target
     await send_album(update, context, album_id)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -353,7 +355,8 @@ def run_polling_with_retry():
             application = Application.builder().token(BOT_TOKEN).build()
             application.add_handler(CommandHandler("start", start))
             application.add_handler(CommandHandler("artist", artist_command))
-            application.add_handler(CommandHandler("simple", simple_command))  # новая команда
+            application.add_handler(CommandHandler("simple", simple_command))
+            application.add_handler(CommandHandler("full", full_command))   # новая команда
             application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
             application.add_handler(CallbackQueryHandler(handle_artist_buttons, pattern=r"^artist::"))
             application.add_handler(CallbackQueryHandler(handle_album_buttons, pattern=r"^album::"))
