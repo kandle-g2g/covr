@@ -14,7 +14,6 @@ from deezer import get_album_tracks, search_artist_albums, search_artist
 
 # ---------- Конфигурация ----------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-BOT_USERNAME = os.getenv("BOT_USERNAME")   # например, "MyAwesomeBot" (без @)
 TARGET_THREAD_ID = os.getenv("TARGET_THREAD_ID")
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
@@ -102,7 +101,7 @@ def extract_deezer_id(url: str):
             pass
     return None
 
-# ---------- Построение сообщения в HTML с гиперссылками ----------
+# ---------- Построение сообщения (HTML) ----------
 def build_album_caption(album_info: dict, simple: bool = False) -> str:
     if simple:
         caption = f"🎵 <b>{album_info['title']}</b>\n\n👥 {album_info['artist']}"
@@ -141,24 +140,21 @@ def build_album_caption(album_info: dict, simple: bool = False) -> str:
     title = album_info["title"]
     artist = album_info["artist"]
     query = requests.utils.quote(f"{artist} {title}")
-    artist_query = requests.utils.quote(artist)
 
-    # Ссылка "Other releases" – deep link на бота (работает в HTML)
-    if BOT_USERNAME:
-        other_link = f"https://t.me/{BOT_USERNAME}?start=artist_{artist_query}"
-        other_text = f'🎤 <a href="{other_link}">Other releases of {artist}</a>'
-    else:
-        other_text = f'🎤 <a href="https://www.deezer.com/search/artist?q={artist_query}">Other releases of {artist} on Deezer</a>'
-
-    # Все ссылки в HTML
+    # Текстовые ссылки на стриминги (по две в строке)
     links = (
         f"\n\n🎧 <a href=\"https://open.spotify.com/search/{query}\">Spotify</a> | 🍎 <a href=\"https://music.apple.com/us/search?term={query}\">Apple Music</a>\n"
         f"💿 <a href=\"https://www.deezer.com/search/{query}\">Deezer</a> | 🎶 <a href=\"https://listen.tidal.com/search?q={query}\">TIDAL</a>\n"
-        f"📺 <a href=\"https://music.youtube.com/search?q={query}\">YouTube</a> | ☁️ <a href=\"https://soundcloud.com/search?q={query}\">SoundCloud</a>\n"
-        f"{other_text}"
+        f"📺 <a href=\"https://music.youtube.com/search?q={query}\">YouTube</a> | ☁️ <a href=\"https://soundcloud.com/search?q={query}\">SoundCloud</a>"
     )
     caption += links
     return caption
+
+def build_album_buttons(album_info: dict) -> InlineKeyboardMarkup:
+    """Одна callback-кнопка 'Other releases'."""
+    artist = album_info["artist"]
+    keyboard = [[InlineKeyboardButton("🎤 Other releases", callback_data=f"artist::{artist}")]]
+    return InlineKeyboardMarkup(keyboard)
 
 async def send_album(update: Update, context: ContextTypes.DEFAULT_TYPE, album_id: int):
     target = update.callback_query.message if update.callback_query else update.message
@@ -177,6 +173,7 @@ async def send_album(update: Update, context: ContextTypes.DEFAULT_TYPE, album_i
 
     simple_mode = context.chat_data.get('simple_mode', False)
     caption = build_album_caption(album_info, simple_mode)
+    buttons = build_album_buttons(album_info)
 
     try:
         img_resp = requests.get(album_info["cover"], timeout=30)
@@ -201,7 +198,8 @@ async def send_album(update: Update, context: ContextTypes.DEFAULT_TYPE, album_i
             await target.reply_photo(
                 photo=InputFile(image_bytes),
                 caption=caption,
-                parse_mode="HTML",   # используем HTML
+                reply_markup=buttons,
+                parse_mode="HTML",
                 read_timeout=60,
                 write_timeout=60,
                 **kwargs
@@ -211,7 +209,8 @@ async def send_album(update: Update, context: ContextTypes.DEFAULT_TYPE, album_i
             await target.reply_document(
                 document=InputFile(image_bytes),
                 caption=caption,
-                parse_mode="HTML",   # используем HTML
+                reply_markup=buttons,
+                parse_mode="HTML",
                 read_timeout=60,
                 write_timeout=60,
                 **kwargs
@@ -223,22 +222,6 @@ async def send_album(update: Update, context: ContextTypes.DEFAULT_TYPE, album_i
 
 # ---------- Обработчики команд ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Проверяем deep linking параметр
-    if context.args:
-        payload = context.args[0]
-        if payload.startswith("artist_"):
-            artist_query = payload.replace("artist_", "")
-            artist_name = requests.utils.unquote(artist_query)
-            print(f"🎤 Deep link artist: {artist_name}")
-            albums = search_artist_albums(artist_name)
-            if not albums:
-                await update.message.reply_text(f"No albums found for {artist_name}")
-                return
-            keyboard = [[InlineKeyboardButton(alb["title"], callback_data=f"album::{alb['id']}")] for alb in albums]
-            await update.message.reply_text(f"🎤 {artist_name} albums:", reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-
-    # Обычный /start без параметра
     await update.message.reply_text(
         "🎵 <b>Covr bot</b>\n\n"
         "Send me:\n"
@@ -249,8 +232,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Commands:\n"
         "/simple – show only cover (as photo), title and artist\n"
         "/full   – show full info (cover as file, tracklist, duration, etc.)\n\n"
-        "All links are embedded in the message and will stay when forwarded.\n"
-        "The 'Other releases' link will open a chat with the bot and automatically show the artist's albums.\n\n"
+        "All streaming links are embedded in the message and will stay when forwarded.\n"
+        "The 'Other releases' button (below) works only inside the chat with the bot.\n\n"
         "<i>Bot is awake and listening!</i>",
         parse_mode="HTML"
     )
