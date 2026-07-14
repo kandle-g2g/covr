@@ -138,19 +138,17 @@ def build_album_caption(album_info: dict, simple: bool = False) -> str:
                 f"{truncated}\n\n... (tracklist truncated)"
             )
 
-    # Гиперссылки на сервисы (по две в строке через |)
     title = album_info["title"]
     artist = album_info["artist"]
     query = requests.utils.quote(f"{artist} {title}")
     artist_query = requests.utils.quote(artist)
 
-    # Ссылка "Other releases" – если BOT_USERNAME задан, ведёт в бота, иначе на Deezer
+    # Ссылка "Other releases" с deep linking через ?start=artist_...
     if BOT_USERNAME:
-        other_link = f"https://t.me/{BOT_USERNAME}?text=/artist%20{artist_query}"
+        other_link = f"https://t.me/{BOT_USERNAME}?start=artist_{artist_query}"
     else:
         other_link = f"https://www.deezer.com/search/artist?q={artist_query}"
 
-    # Собираем ссылки попарно
     links = (
         f"\n\n🎧 [Spotify](https://open.spotify.com/search/{query}) | 🍎 [Apple Music](https://music.apple.com/us/search?term={query})\n"
         f"💿 [Deezer](https://www.deezer.com/search/{query}) | 🎶 [TIDAL](https://listen.tidal.com/search?q={query})\n"
@@ -223,6 +221,22 @@ async def send_album(update: Update, context: ContextTypes.DEFAULT_TYPE, album_i
 
 # ---------- Обработчики команд ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Проверяем deep linking параметр
+    if context.args:
+        payload = context.args[0]
+        if payload.startswith("artist_"):
+            artist_query = payload.replace("artist_", "")
+            artist_name = requests.utils.unquote(artist_query)
+            print(f"🎤 Deep link artist: {artist_name}")
+            albums = search_artist_albums(artist_name)
+            if not albums:
+                await update.message.reply_text(f"No albums found for {artist_name}")
+                return
+            keyboard = [[InlineKeyboardButton(alb["title"], callback_data=f"album::{alb['id']}")] for alb in albums]
+            await update.message.reply_text(f"🎤 {artist_name} albums:", reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+
+    # Обычный /start без параметра
     await update.message.reply_text(
         "🎵 *Covr bot*\n\n"
         "Send me:\n"
