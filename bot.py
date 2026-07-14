@@ -101,9 +101,13 @@ def extract_deezer_id(url: str):
             pass
     return None
 
-# ---------- Построение сообщения (без нумерации треков) ----------
-def build_album_caption(album_info: dict) -> str:
-    # Просто список названий треков, каждый с новой строки – без цифр
+# ---------- Построение сообщения (теперь с параметром simple) ----------
+def build_album_caption(album_info: dict, simple: bool = False) -> str:
+    if simple:
+        # Простой режим: только название и исполнитель
+        return f"🎵 {album_info['title']}\n\n👥 {album_info['artist']}"
+    
+    # Полный режим: всё как раньше
     tracklist = "\n".join(album_info["tracks"])
     raw_date = album_info.get("release_date", "")
     formatted_date = raw_date
@@ -152,16 +156,24 @@ def build_album_buttons(album_info: dict) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(keyboard)
 
 async def send_album(update: Update, context: ContextTypes.DEFAULT_TYPE, album_id: int):
+    # Определяем целевое сообщение (для ответа)
+    target = update.callback_query.message if update.callback_query else update.message
+    if not target:
+        print("❌ No target message")
+        return
+
     print(f"📤 send_album called with album_id={album_id}")
     try:
         album_info = get_album_tracks(album_id)
         print(f"✅ Got album: {album_info['title']} ({album_info['track_count']} tracks)")
     except Exception as e:
         print(f"❌ Error fetching album: {e}")
-        await update.message.reply_text("Error fetching album from Deezer")
+        await target.reply_text("Error fetching album from Deezer")
         return
 
-    caption = build_album_caption(album_info)
+    # Проверяем режим
+    simple_mode = context.chat_data.get('simple_mode', False)
+    caption = build_album_caption(album_info, simple_mode)
     buttons = build_album_buttons(album_info)
 
     try:
@@ -169,37 +181,45 @@ async def send_album(update: Update, context: ContextTypes.DEFAULT_TYPE, album_i
         print(f"🖼 Cover downloaded, size={len(img_resp.content)}")
     except Exception as e:
         print(f"❌ Cover download error: {e}")
-        await update.message.reply_text("Error downloading cover")
+        await target.reply_text("Error downloading cover")
         return
 
     image_bytes = BytesIO(img_resp.content)
     safe_name = re.sub(r'[\\/*?:"<>|]', "", album_info["title"])
     image_bytes.name = f"{safe_name}.jpg"
 
-    target = update.callback_query.message if update.callback_query else update.message
-    if not target:
-        print("❌ No target message")
-        return
-
     kwargs = {}
     if TARGET_THREAD_ID and target.chat.type in ["group", "supergroup"]:
         kwargs["message_thread_id"] = int(TARGET_THREAD_ID)
         print(f"🧵 thread_id={kwargs['message_thread_id']}")
 
-    print("📤 Sending document...")
+    print("📤 Sending...")
     try:
-        await target.reply_document(
-            document=InputFile(image_bytes),
-            caption=caption,
-            reply_markup=buttons,
-            read_timeout=60,
-            write_timeout=60,
-            **kwargs
-        )
-        print("✅ Document sent")
+        if simple_mode:
+            # Отправляем как фото (медиа, не файл)
+            await target.reply_photo(
+                photo=InputFile(image_bytes),
+                caption=caption,
+                reply_markup=buttons,
+                read_timeout=60,
+                write_timeout=60,
+                **kwargs
+            )
+            print("✅ Photo sent (simple mode)")
+        else:
+            # Обычный режим – отправляем как документ
+            await target.reply_document(
+                document=InputFile(image_bytes),
+                caption=caption,
+                reply_markup=buttons,
+                read_timeout=60,
+                write_timeout=60,
+                **kwargs
+            )
+            print("✅ Document sent (full mode)")
     except Exception as e:
         print(f"❌ Send failed: {e}")
-        await update.message.reply_text(f"Error sending album: {e}")
+        await target.reply_text(f"Error sending album: {e}")
 
 # ---------- Обработчики команд ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -210,6 +230,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• an artist name (e.g., *Kanye West*) – I'll show their albums\n"
         "• a link from Spotify, Apple Music, or Deezer\n\n"
         "Or use /artist <name> to search for an artist explicitly.\n\n"
+        "Use /simple to toggle simple mode (only cover, title and artist).\n\n"
         "_Bot is awake and listening!_",
         parse_mode="Markdown"
     )
@@ -226,6 +247,15 @@ async def artist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     keyboard = [[InlineKeyboardButton(alb["title"], callback_data=f"album::{alb['id']}")] for alb in albums]
     await update.message.reply_text(f"🎤 {artist_name} albums:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def simple_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Переключает простой режим для текущего чата."""
+    chat_id = update.effective_chat.id
+    current = context.chat_data.get('simple_mode', False)
+    new_mode = not current
+    context.chat_data['simple_mode'] = new_mode
+    status = "включен" if new_mode else "выключен"
+    await update.message.reply_text(f"Простой режим {status}. Теперь при запросе альбома будет отображаться только обложка, название и исполнитель.")
 
 async def handle_artist_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -244,6 +274,7 @@ async def handle_album_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.answer()
     album_id = int(query.data.replace("album::", ""))
     print(f"💿 Album button: {album_id}")
+    # Передаём тот же update и context, чтобы внутри send_album использовался правильный target
     await send_album(update, context, album_id)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -322,6 +353,7 @@ def run_polling_with_retry():
             application = Application.builder().token(BOT_TOKEN).build()
             application.add_handler(CommandHandler("start", start))
             application.add_handler(CommandHandler("artist", artist_command))
+            application.add_handler(CommandHandler("simple", simple_command))  # новая команда
             application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
             application.add_handler(CallbackQueryHandler(handle_artist_buttons, pattern=r"^artist::"))
             application.add_handler(CallbackQueryHandler(handle_album_buttons, pattern=r"^album::"))
