@@ -83,7 +83,8 @@ def get_album_tracks(album_id):
     return {
         "id": data["id"],
         "title": data["title"],
-        "artist": ", ".join(all_artists),
+        "artist": ", ".join(all_artists),          # все исполнители (для отображения)
+        "main_artist": all_artists[0] if all_artists else data["artist"]["name"],  # главный (для кнопки)
         "release_date": data["release_date"],
         "cover": data["cover_xl"],
         "tracks": tracks,

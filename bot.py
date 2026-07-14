@@ -151,9 +151,9 @@ def build_album_caption(album_info: dict, simple: bool = False) -> str:
     return caption
 
 def build_album_buttons(album_info: dict) -> InlineKeyboardMarkup:
-    """Одна callback-кнопка 'Other releases'."""
-    artist = album_info["artist"]
-    keyboard = [[InlineKeyboardButton("🎤 Other releases", callback_data=f"artist::{artist}")]]
+    """Одна callback-кнопка 'Other releases' с главным исполнителем."""
+    main_artist = album_info.get("main_artist", album_info["artist"])
+    keyboard = [[InlineKeyboardButton("🎤 Other releases", callback_data=f"artist::{main_artist}")]]
     return InlineKeyboardMarkup(keyboard)
 
 async def send_album(update: Update, context: ContextTypes.DEFAULT_TYPE, album_id: int):
