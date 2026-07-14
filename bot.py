@@ -5,7 +5,7 @@ import threading
 import requests
 from io import BytesIO
 from flask import Flask
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
+from telegram import Update, InputFile
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
 # Импортируйте ваши модули (пути должны быть правильные)
@@ -14,6 +14,7 @@ from deezer import get_album_tracks, search_artist_albums, search_artist
 
 # ---------- Конфигурация ----------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_USERNAME = os.getenv("BOT_USERNAME")   # например, "MyAwesomeBot" (без @)
 TARGET_THREAD_ID = os.getenv("TARGET_THREAD_ID")
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
@@ -101,62 +102,64 @@ def extract_deezer_id(url: str):
             pass
     return None
 
-# ---------- Построение сообщения (с параметром simple) ----------
+# ---------- Построение сообщения (только текст с гиперссылками) ----------
 def build_album_caption(album_info: dict, simple: bool = False) -> str:
     if simple:
-        # Простой режим: только название и исполнитель
-        return f"🎵 {album_info['title']}\n\n👥 {album_info['artist']}"
-    
-    # Полный режим: всё как раньше
-    tracklist = "\n".join(album_info["tracks"])
-    raw_date = album_info.get("release_date", "")
-    formatted_date = raw_date
-    try:
-        from datetime import datetime
-        dt = datetime.strptime(raw_date, "%Y-%m-%d")
-        formatted_date = dt.strftime("%B %d, %Y")
-    except:
-        pass
-    caption = (
-        f"🎵 {album_info['title']}\n\n"
-        f"👥 {album_info['artist']}\n\n"
-        f"📅 {formatted_date}\n"
-        f"💿 {album_info['track_count']} tracks\n"
-        f"⏳ {album_info['duration']}\n\n"
-        f"---Tracklist---\n\n"
-        f"{tracklist}"
-    )
-    if len(caption) > 4000:
-        max_len = 4000 - len(caption) + len(tracklist) - 50
-        truncated = tracklist[:max_len]
+        caption = f"🎵 {album_info['title']}\n\n👥 {album_info['artist']}"
+    else:
+        tracklist = "\n".join(album_info["tracks"])
+        raw_date = album_info.get("release_date", "")
+        formatted_date = raw_date
+        try:
+            from datetime import datetime
+            dt = datetime.strptime(raw_date, "%Y-%m-%d")
+            formatted_date = dt.strftime("%B %d, %Y")
+        except:
+            pass
         caption = (
             f"🎵 {album_info['title']}\n\n"
             f"👥 {album_info['artist']}\n\n"
             f"📅 {formatted_date}\n"
             f"💿 {album_info['track_count']} tracks\n"
             f"⏳ {album_info['duration']}\n\n"
-            f"---Tracklist (first {max_len} chars)---\n\n"
-            f"{truncated}\n\n... (tracklist truncated)"
+            f"---Tracklist---\n\n"
+            f"{tracklist}"
         )
-    return caption
+        if len(caption) > 4000:
+            max_len = 4000 - len(caption) + len(tracklist) - 50
+            truncated = tracklist[:max_len]
+            caption = (
+                f"🎵 {album_info['title']}\n\n"
+                f"👥 {album_info['artist']}\n\n"
+                f"📅 {formatted_date}\n"
+                f"💿 {album_info['track_count']} tracks\n"
+                f"⏳ {album_info['duration']}\n\n"
+                f"---Tracklist (first {max_len} chars)---\n\n"
+                f"{truncated}\n\n... (tracklist truncated)"
+            )
 
-def build_album_buttons(album_info: dict) -> InlineKeyboardMarkup:
+    # Гиперссылки на сервисы
     title = album_info["title"]
     artist = album_info["artist"]
     query = requests.utils.quote(f"{artist} {title}")
-    keyboard = [
-        [InlineKeyboardButton("🎧 Spotify", url=f"https://open.spotify.com/search/{query}"),
-         InlineKeyboardButton("🍎 Apple Music", url=f"https://music.apple.com/us/search?term={query}")],
-        [InlineKeyboardButton("💿 Deezer", url=f"https://www.deezer.com/search/{query}"),
-         InlineKeyboardButton("🎶 TIDAL", url=f"https://listen.tidal.com/search?q={query}")],
-        [InlineKeyboardButton("📺 YouTube", url=f"https://music.youtube.com/search?q={query}"),
-         InlineKeyboardButton("☁️ SoundCloud", url=f"https://soundcloud.com/search?q={query}")],
-        [InlineKeyboardButton("🎤 Other releases", callback_data=f"artist::{artist}")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+    artist_query = requests.utils.quote(artist)
+
+    # Ссылка "Other releases" ведёт в чат с ботом, подставляя команду /artist
+    other_releases_link = f"https://t.me/{BOT_USERNAME}?text=/artist%20{artist_query}" if BOT_USERNAME else f"[Other releases of {artist}](https://www.deezer.com/search/artist?q={artist_query})"
+
+    links = (
+        f"\n\n🎧 [Spotify](https://open.spotify.com/search/{query})\n"
+        f"🍎 [Apple Music](https://music.apple.com/us/search?term={query})\n"
+        f"💿 [Deezer](https://www.deezer.com/search/{query})\n"
+        f"🎶 [TIDAL](https://listen.tidal.com/search?q={query})\n"
+        f"📺 [YouTube](https://music.youtube.com/search?q={query})\n"
+        f"☁️ [SoundCloud](https://soundcloud.com/search?q={query})\n"
+        f"🎤 [Other releases of {artist}]({other_releases_link})"
+    )
+    caption += links
+    return caption
 
 async def send_album(update: Update, context: ContextTypes.DEFAULT_TYPE, album_id: int):
-    # Определяем целевое сообщение (для ответа)
     target = update.callback_query.message if update.callback_query else update.message
     if not target:
         print("❌ No target message")
@@ -171,10 +174,8 @@ async def send_album(update: Update, context: ContextTypes.DEFAULT_TYPE, album_i
         await target.reply_text("Error fetching album from Deezer")
         return
 
-    # Проверяем режим
     simple_mode = context.chat_data.get('simple_mode', False)
     caption = build_album_caption(album_info, simple_mode)
-    buttons = build_album_buttons(album_info)
 
     try:
         img_resp = requests.get(album_info["cover"], timeout=30)
@@ -196,22 +197,20 @@ async def send_album(update: Update, context: ContextTypes.DEFAULT_TYPE, album_i
     print("📤 Sending...")
     try:
         if simple_mode:
-            # Отправляем как фото (медиа, не файл)
             await target.reply_photo(
                 photo=InputFile(image_bytes),
                 caption=caption,
-                reply_markup=buttons,
+                parse_mode="Markdown",
                 read_timeout=60,
                 write_timeout=60,
                 **kwargs
             )
             print("✅ Photo sent (simple mode)")
         else:
-            # Обычный режим – отправляем как документ
             await target.reply_document(
                 document=InputFile(image_bytes),
                 caption=caption,
-                reply_markup=buttons,
+                parse_mode="Markdown",
                 read_timeout=60,
                 write_timeout=60,
                 **kwargs
@@ -233,6 +232,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Commands:\n"
         "/simple – show only cover (as photo), title and artist\n"
         "/full   – show full info (cover as file, tracklist, duration, etc.)\n\n"
+        "All links (including 'Other releases') are embedded in the message and will stay when forwarded.\n"
+        "'Other releases' will open a chat with the bot and pre-fill the /artist command.\n\n"
         "_Bot is awake and listening!_",
         parse_mode="Markdown"
     )
@@ -251,14 +252,12 @@ async def artist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🎤 {artist_name} albums:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def simple_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Включает простой режим."""
     context.chat_data['simple_mode'] = True
-    await update.message.reply_text("✅ Simple mode is enabled. Now, only the cover art (as a photo), title, and artist will be displayed.")
+    await update.message.reply_text("✅ Simple mode enabled. Only cover (as photo), title and artist will be shown.")
 
 async def full_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Включает полный режим."""
     context.chat_data['simple_mode'] = False
-    await update.message.reply_text("✅ Full mode enabled. Full information will be displayed.")
+    await update.message.reply_text("✅ Full mode enabled. All info (tracklist, duration, cover as file) will be shown.")
 
 async def handle_artist_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -343,7 +342,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ---------- Запуск polling с автоматическим перезапуском ----------
 def run_polling_with_retry():
-    # Удаляем вебхук перед стартом
     try:
         requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook")
         print("✅ Webhook deleted")
@@ -356,7 +354,7 @@ def run_polling_with_retry():
             application.add_handler(CommandHandler("start", start))
             application.add_handler(CommandHandler("artist", artist_command))
             application.add_handler(CommandHandler("simple", simple_command))
-            application.add_handler(CommandHandler("full", full_command))   # новая команда
+            application.add_handler(CommandHandler("full", full_command))
             application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
             application.add_handler(CallbackQueryHandler(handle_artist_buttons, pattern=r"^artist::"))
             application.add_handler(CallbackQueryHandler(handle_album_buttons, pattern=r"^album::"))
@@ -367,10 +365,7 @@ def run_polling_with_retry():
             print(f"❌ Polling упал с ошибкой: {e}. Перезапуск через 10 секунд...")
             time.sleep(10)
 
-# ---------- Главный вход ----------
 if __name__ == "__main__":
-    # Запускаем Flask в фоновом потоке (чтобы был открыт порт)
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
-    # Запускаем polling с автоматическим восстановлением
     run_polling_with_retry()
