@@ -102,10 +102,10 @@ def extract_deezer_id(url: str):
             pass
     return None
 
-# ---------- Построение сообщения (ссылки по две в строке) ----------
+# ---------- Построение сообщения в HTML с гиперссылками ----------
 def build_album_caption(album_info: dict, simple: bool = False) -> str:
     if simple:
-        caption = f"🎵 {album_info['title']}\n\n👥 {album_info['artist']}"
+        caption = f"🎵 <b>{album_info['title']}</b>\n\n👥 {album_info['artist']}"
     else:
         tracklist = "\n".join(album_info["tracks"])
         raw_date = album_info.get("release_date", "")
@@ -117,7 +117,7 @@ def build_album_caption(album_info: dict, simple: bool = False) -> str:
         except:
             pass
         caption = (
-            f"🎵 {album_info['title']}\n\n"
+            f"🎵 <b>{album_info['title']}</b>\n\n"
             f"👥 {album_info['artist']}\n\n"
             f"📅 {formatted_date}\n"
             f"💿 {album_info['track_count']} tracks\n"
@@ -129,7 +129,7 @@ def build_album_caption(album_info: dict, simple: bool = False) -> str:
             max_len = 4000 - len(caption) + len(tracklist) - 50
             truncated = tracklist[:max_len]
             caption = (
-                f"🎵 {album_info['title']}\n\n"
+                f"🎵 <b>{album_info['title']}</b>\n\n"
                 f"👥 {album_info['artist']}\n\n"
                 f"📅 {formatted_date}\n"
                 f"💿 {album_info['track_count']} tracks\n"
@@ -143,17 +143,19 @@ def build_album_caption(album_info: dict, simple: bool = False) -> str:
     query = requests.utils.quote(f"{artist} {title}")
     artist_query = requests.utils.quote(artist)
 
-    # Ссылка "Other releases" с использованием tg:// для надёжного открытия
+    # Ссылка "Other releases" – deep link на бота (работает в HTML)
     if BOT_USERNAME:
-        other_link = f"tg://resolve?domain={BOT_USERNAME}&start=artist_{artist_query}"
+        other_link = f"https://t.me/{BOT_USERNAME}?start=artist_{artist_query}"
+        other_text = f'🎤 <a href="{other_link}">Other releases of {artist}</a>'
     else:
-        other_link = f"https://www.deezer.com/search/artist?q={artist_query}"
+        other_text = f'🎤 <a href="https://www.deezer.com/search/artist?q={artist_query}">Other releases of {artist} on Deezer</a>'
 
+    # Все ссылки в HTML
     links = (
-        f"\n\n🎧 [Spotify](https://open.spotify.com/search/{query}) | 🍎 [Apple Music](https://music.apple.com/us/search?term={query})\n"
-        f"💿 [Deezer](https://www.deezer.com/search/{query}) | 🎶 [TIDAL](https://listen.tidal.com/search?q={query})\n"
-        f"📺 [YouTube](https://music.youtube.com/search?q={query}) | ☁️ [SoundCloud](https://soundcloud.com/search?q={query})\n"
-        f"🎤 [Other releases of {artist}]({other_link})"
+        f"\n\n🎧 <a href=\"https://open.spotify.com/search/{query}\">Spotify</a> | 🍎 <a href=\"https://music.apple.com/us/search?term={query}\">Apple Music</a>\n"
+        f"💿 <a href=\"https://www.deezer.com/search/{query}\">Deezer</a> | 🎶 <a href=\"https://listen.tidal.com/search?q={query}\">TIDAL</a>\n"
+        f"📺 <a href=\"https://music.youtube.com/search?q={query}\">YouTube</a> | ☁️ <a href=\"https://soundcloud.com/search?q={query}\">SoundCloud</a>\n"
+        f"{other_text}"
     )
     caption += links
     return caption
@@ -199,7 +201,7 @@ async def send_album(update: Update, context: ContextTypes.DEFAULT_TYPE, album_i
             await target.reply_photo(
                 photo=InputFile(image_bytes),
                 caption=caption,
-                parse_mode="Markdown",
+                parse_mode="HTML",   # используем HTML
                 read_timeout=60,
                 write_timeout=60,
                 **kwargs
@@ -209,7 +211,7 @@ async def send_album(update: Update, context: ContextTypes.DEFAULT_TYPE, album_i
             await target.reply_document(
                 document=InputFile(image_bytes),
                 caption=caption,
-                parse_mode="Markdown",
+                parse_mode="HTML",   # используем HTML
                 read_timeout=60,
                 write_timeout=60,
                 **kwargs
@@ -238,19 +240,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Обычный /start без параметра
     await update.message.reply_text(
-        "🎵 *Covr bot*\n\n"
+        "🎵 <b>Covr bot</b>\n\n"
         "Send me:\n"
-        "• an album name (e.g., *Graduation*)\n"
-        "• an artist name (e.g., *Kanye West*) – I'll show their albums\n"
+        "• an album name (e.g., <i>Graduation</i>)\n"
+        "• an artist name (e.g., <i>Kanye West</i>) – I'll show their albums\n"
         "• a link from Spotify, Apple Music, or Deezer\n\n"
-        "Or use /artist <name> to search for an artist explicitly.\n\n"
+        "Or use /artist &lt;name&gt; to search for an artist explicitly.\n\n"
         "Commands:\n"
         "/simple – show only cover (as photo), title and artist\n"
         "/full   – show full info (cover as file, tracklist, duration, etc.)\n\n"
-        "All links (including 'Other releases') are embedded in the message and will stay when forwarded.\n"
-        "'Other releases' will open a chat with the bot and automatically show the artist's albums.\n\n"
-        "_Bot is awake and listening!_",
-        parse_mode="Markdown"
+        "All links are embedded in the message and will stay when forwarded.\n"
+        "The 'Other releases' link will open a chat with the bot and automatically show the artist's albums.\n\n"
+        "<i>Bot is awake and listening!</i>",
+        parse_mode="HTML"
     )
 
 async def artist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
