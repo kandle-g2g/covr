@@ -145,7 +145,8 @@ def build_album_caption(album_info: dict, simple: bool = False) -> str:
     links = (
         f"\n\n🎧 <a href=\"https://open.spotify.com/search/{query}\">Spotify</a> | 🍎 <a href=\"https://music.apple.com/us/search?term={query}\">Apple Music</a>\n"
         f"💿 <a href=\"https://www.deezer.com/search/{query}\">Deezer</a> | 🎶 <a href=\"https://listen.tidal.com/search?q={query}\">TIDAL</a>\n"
-        f"📺 <a href=\"https://music.youtube.com/search?q={query}\">YouTube</a> | ☁️ <a href=\"https://soundcloud.com/search?q={query}\">SoundCloud</a>"
+        f"📺 <a href=\"https://music.youtube.com/search?q={query}\">YouTube</a> | ☁️ <a href=\"https://soundcloud.com/search?q={query}\">SoundCloud</a>\n"
+        f"💙 <a href=\"https://vk.com/audio?q={query}\">VK Music</a> | 🟡 <a href=\"https://music.yandex.ru/search?text={query}\">Yandex Music</a>"
     )
     caption += links
     return caption
