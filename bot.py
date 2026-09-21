@@ -1,12 +1,19 @@
 import os
 import re
 import time
+from html import escape, unescape
 import threading
 import requests
 from io import BytesIO
 from flask import Flask
 from telegram import Update, InputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
+
+try:
+    from telegram import LinkPreviewOptions
+    NO_PREVIEW = {"link_preview_options": LinkPreviewOptions(is_disabled=True)}
+except ImportError:  # python-telegram-bot < 20.8
+    NO_PREVIEW = {"disable_web_page_preview": True}
 
 # Импортируйте ваши модули (пути должны быть правильные)
 from music_parser import parse_music_url
@@ -49,6 +56,14 @@ def format_duration(seconds: int) -> str:
     if hours > 0:
         return f"{hours}:{minutes:02}:{secs:02}"
     return f"{minutes}:{secs:02}"
+
+CAPTION_LIMIT = 1024  # лимит Telegram на подпись к фото/документу
+
+def visible_length(html_text: str) -> int:
+    """Длина текста так, как её считает Telegram: без тегов, с раскрытыми &amp; и т.п.
+    Считаем в UTF-16 (эмодзи = 2 единицы), чтобы не промахнуться на границе лимита."""
+    plain = unescape(re.sub(r"<[^>]+>", "", html_text))
+    return len(plain.encode("utf-16-le")) // 2
 
 # ---------- Deezer API ----------
 def deezer_search_album(query: str):
@@ -103,10 +118,18 @@ def extract_deezer_id(url: str):
 
 # ---------- Построение сообщения (HTML) ----------
 def build_album_caption(album_info: dict, simple: bool = False) -> str:
+    # Сырые значения нужны для ссылок, экранированные (_h) — для вставки в HTML-текст.
+    # Без escape названия вроде "</3" ломают разметку Telegram.
+    title = album_info["title"]
+    artist = album_info["artist"]
+    title_h = escape(title)
+    artist_h = escape(artist)
+
     if simple:
-        caption = f"🎵 <b>{album_info['title']}</b>\n\n👥 {album_info['artist']}"
+        caption = f"🎵 <b>{title_h}</b>\n\n👥 {artist_h}"
     else:
         tracklist = "\n".join(album_info["tracks"])
+        tracklist_h = escape(tracklist)
         raw_date = album_info.get("release_date", "")
         formatted_date = raw_date
         try:
@@ -115,21 +138,23 @@ def build_album_caption(album_info: dict, simple: bool = False) -> str:
             formatted_date = dt.strftime("%B %d, %Y")
         except:
             pass
+        formatted_date = escape(formatted_date)
         caption = (
-            f"🎵 <b>{album_info['title']}</b>\n\n"
-            f"👥 {album_info['artist']}\n\n"
+            f"🎵 <b>{title_h}</b>\n\n"
+            f"👥 {artist_h}\n\n"
             f"📅 {formatted_date}\n"
             f"💿 {album_info['track_count']} tracks\n"
             f"⏳ {album_info['duration']}\n\n"
             f"---Tracklist---\n\n"
-            f"{tracklist}"
+            f"{tracklist_h}"
         )
         if len(caption) > 4000:
-            max_len = 4000 - len(caption) + len(tracklist) - 50
-            truncated = tracklist[:max_len]
+            max_len = 4000 - len(caption) + len(tracklist_h) - 50
+            # режем сырой текст и экранируем после, чтобы не разрезать &amp; и т.п. посередине
+            truncated = escape(tracklist[:max_len])
             caption = (
-                f"🎵 <b>{album_info['title']}</b>\n\n"
-                f"👥 {album_info['artist']}\n\n"
+                f"🎵 <b>{title_h}</b>\n\n"
+                f"👥 {artist_h}\n\n"
                 f"📅 {formatted_date}\n"
                 f"💿 {album_info['track_count']} tracks\n"
                 f"⏳ {album_info['duration']}\n\n"
@@ -137,9 +162,8 @@ def build_album_caption(album_info: dict, simple: bool = False) -> str:
                 f"{truncated}\n\n... (tracklist truncated)"
             )
 
-    title = album_info["title"]
-    artist = album_info["artist"]
-    query = requests.utils.quote(f"{artist} {title}")
+    # safe="" — чтобы "/" в названии не превращался в лишний сегмент пути в ссылке
+    query = requests.utils.quote(f"{artist} {title}", safe="")
 
     # Текстовые ссылки на стриминги (по две в строке)
     links = (
@@ -195,9 +219,13 @@ async def send_album(update: Update, context: ContextTypes.DEFAULT_TYPE, album_i
 
     print("📤 Sending...")
     try:
-        if simple_mode:
-            await target.reply_photo(
-                photo=InputFile(image_bytes),
+        cover_arg = {"photo": InputFile(image_bytes)} if simple_mode else {"document": InputFile(image_bytes)}
+        send_cover = target.reply_photo if simple_mode else target.reply_document
+
+        if visible_length(caption) <= CAPTION_LIMIT:
+            # Всё помещается в подпись — одно сообщение, как раньше
+            await send_cover(
+                **cover_arg,
                 caption=caption,
                 reply_markup=buttons,
                 parse_mode="HTML",
@@ -205,18 +233,25 @@ async def send_album(update: Update, context: ContextTypes.DEFAULT_TYPE, album_i
                 write_timeout=60,
                 **kwargs
             )
-            print("✅ Photo sent (simple mode)")
+            print("✅ Cover sent with caption")
         else:
-            await target.reply_document(
-                document=InputFile(image_bytes),
-                caption=caption,
-                reply_markup=buttons,
-                parse_mode="HTML",
+            # Не влезает в подпись (1024) — обложка отдельно, текст с кнопками вторым сообщением (лимит 4096)
+            await send_cover(
+                **cover_arg,
                 read_timeout=60,
                 write_timeout=60,
                 **kwargs
             )
-            print("✅ Document sent (full mode)")
+            await target.reply_text(
+                caption,
+                reply_markup=buttons,
+                parse_mode="HTML",
+                read_timeout=60,
+                write_timeout=60,
+                **NO_PREVIEW,
+                **kwargs
+            )
+            print("✅ Cover + text sent separately (caption too long)")
     except Exception as e:
         print(f"❌ Send failed: {e}")
         await target.reply_text(f"Error sending album: {e}")
